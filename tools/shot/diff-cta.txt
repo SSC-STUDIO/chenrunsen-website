@@ -1,0 +1,94 @@
+﻿diff --git a/src/components/SCTA.astro b/src/components/SCTA.astro
+index e8bcacf..9896024 100644
+--- a/src/components/SCTA.astro
++++ b/src/components/SCTA.astro
+@@ -107,9 +107,13 @@ const lines = [['涓€', '璧?, '鍋?], ['鐐?, '涓?, '瑗?]]
+ </section>
+ 
+ <script>
+-  import Emitter from '../utils/Emitter'
+-  import Ticker from '../utils/Ticker'
+-  import { prefersReducedMotion } from '../utils/motion'
++  import {
++    whenReady,
++    onFrame,
++    onResize,
++    prefersReducedMotion,
++    type Cleanup,
++  } from '../motion/core'
+ 
+   import { gsap } from 'gsap'
+   import { ScrollTrigger } from 'gsap/ScrollTrigger'
+@@ -153,6 +157,8 @@ const lines = [['涓€', '璧?, '鍋?], ['鐐?, '涓?, '瑗?]]
+     buttonIsHovered: boolean
+     isPaused: boolean
+     tl: gsap.core.Timeline
++    stops: Cleanup[] = []
++    unframe: Cleanup | null = null
+ 
+     /**
+      * Constructor
+@@ -198,12 +204,7 @@ const lines = [['涓€', '璧?, '鍋?], ['鐐?, '涓?, '瑗?]]
+       this.buttonIsHovered = false
+       this.isPaused = true
+ 
+-      // Init
+-      if (document.readyState === 'complete') {
+-        Ticker.nextTick(this.init, this)
+-      } else {
+-        Emitter.once('siteLoaded', this.init, this)
+-      }
++      whenReady(() => this.init())
+     }
+ 
+     /**
+@@ -222,7 +223,7 @@ const lines = [['涓€', '璧?, '鍋?], ['鐐?, '涓?, '瑗?]]
+      * Bind events
+      */
+     bindEvents() {
+-      Emitter.on('resize', this.onResize, this)
++      this.stops.push(onResize(() => this.onResize()))
+ 
+       // 鏁翠釜 CTA 鍖哄煙锛堝惈澶у渾锛夐兘鍙Е鍙戯紝鑰屼笉鏄彧鏈?96px 鐨勬寜閽牸
+       this.container.addEventListener('mouseenter', this.onHover.bind(this))
+@@ -235,11 +236,21 @@ const lines = [['涓€', '璧?, '鍋?], ['鐐?, '涓?, '瑗?]]
+         passive: true,
+       })
+ 
+-      this.el.addEventListener('intersect', this.onIntersect.bind(this), {
++      this.el.addEventListener('intersect', this.onIntersect, {
+         passive: true,
+       })
+     }
+ 
++    startFrame() {
++      if (this.unframe) return
++      this.unframe = onFrame((time) => this.tick(time))
++    }
++
++    stopFrame() {
++      this.unframe?.()
++      this.unframe = null
++    }
++
+     /**
+      * Resize handler
+      */
+@@ -251,14 +262,11 @@ const lines = [['涓€', '璧?, '鍋?], ['鐐?, '涓?, '瑗?]]
+     /**
+      * Intersect handler
+      */
+-    onIntersect(e) {
++    onIntersect = (e: CustomEvent) => {
+       this.isPaused = !e.detail.isIntersecting
+ 
+-      if (this.isPaused) {
+-        Emitter.off('tick', this.tick, this)
+-      } else {
+-        Emitter.on('tick', this.tick, this)
+-      }
++      if (this.isPaused) this.stopFrame()
++      else this.startFrame()
+     }
+ 
+     /**

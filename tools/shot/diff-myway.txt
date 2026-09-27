@@ -1,0 +1,218 @@
+﻿diff --git a/src/components/SMyWay.astro b/src/components/SMyWay.astro
+index a77ad89..1a9fcbe 100644
+--- a/src/components/SMyWay.astro
++++ b/src/components/SMyWay.astro
+@@ -1,6 +1,7 @@
+ ---
+ import InkMountains from './InkMountains.astro'
+ import InkBloom from './InkBloom.astro'
++import SenMark from './SenMark.astro'
+ 
+ const frames = [
+   {
+@@ -106,37 +107,9 @@ const cnNum = ['澹?, '璐?, '鍙?, '鑲?, '浼?, '闄?, '鏌?, '鎹?, '鐜?]
+ <section class="s-my-way" data-intersect>
+   <InkMountains compact />
+   <InkBloom class="s__bloom" size={260} />
+-  <svg
+-    class="s__smiley js-smiley"
+-    xmlns="http://www.w3.org/2000/svg"
+-    viewBox="0 0 77.8 77.8"
+-    xml:space="preserve"
+-  >
+-    <circle class="sw-ring" cx="38.9" cy="38.9" r="34"></circle>
+-
+-    <rect
+-      class="sw-hole"
+-      x="27.4"
+-      y="27.4"
+-      width="23"
+-      height="23"
+-      rx="1.5"
+-    ></rect>
+-
+-    <path
+-      class="sw-ridge"
+-      d="M29.2 43.4 L33.4 37.8 L36.4 41.2 L39.4 36.6 L42.2 40.2 L44.4 37.4 L48.6 43.4"
+-    ></path>
+-    <path class="sw-trail" d="M29.2 47.6 H48.6"></path>
+-    <circle class="sw-sun" cx="45.1" cy="33.9" r="1.7"></circle>
+-
+-    <g class="sw-pips" aria-hidden="true">
+-      <circle cx="38.9" cy="11.6" r="1.15"></circle>
+-      <circle cx="66.2" cy="38.9" r="1.15"></circle>
+-      <circle cx="38.9" cy="66.2" r="1.15"></circle>
+-      <circle cx="11.6" cy="38.9" r="1.15"></circle>
+-    </g>
+-  </svg>
++  <div class="s__smiley js-smiley" aria-hidden="true">
++    <SenMark size={72} />
++  </div>
+ 
+   <div class="s__objects js-objects">
+     {
+@@ -251,8 +224,15 @@ const cnNum = ['澹?, '璐?, '鍙?, '鑲?, '浼?, '闄?, '鏌?, '鎹?, '鐜?]
+ </section>
+ 
+ <script>
+-  import Emitter from '../utils/Emitter'
+-  import Ticker from '../utils/Ticker'
++  import {
++    whenReady,
++    onFrame,
++    onResize,
++    onScroll,
++    onPointer,
++    frameDelta,
++    type Cleanup,
++  } from '../motion/core'
+ 
+   class Section {
+     el: HTMLElement
+@@ -310,6 +290,8 @@ const cnNum = ['澹?, '璐?, '鍙?, '鑲?, '浼?, '闄?, '鏌?, '鎹?, '鐜?]
+     lastTouch: number
+ 
+     isPaused: boolean
++    stops: Cleanup[] = []
++    unframe: Cleanup | null = null
+ 
+     /**
+      * Constructor
+@@ -370,12 +352,7 @@ const cnNum = ['澹?, '璐?, '鍙?, '鑲?, '浼?, '闄?, '鏌?, '鎹?, '鐜?]
+ 
+       this.isPaused = true
+ 
+-      // Init
+-      if (document.readyState === 'complete') {
+-        Ticker.nextTick(this.init, this)
+-      } else {
+-        Emitter.once('siteLoaded', this.init, this)
+-      }
++      whenReady(() => this.init())
+     }
+ 
+     /**
+@@ -395,10 +372,10 @@ const cnNum = ['澹?, '璐?, '鍙?, '鑲?, '浼?, '闄?, '鏌?, '鎹?, '鐜?]
+      * Bind events
+      */
+     bindEvents() {
+-      Emitter.on('mousemove', this.onMouseMove, this)
+-      Emitter.on('resize', this.onResize, this)
+-      Emitter.on('scroll', this.onScroll, this)
+-      Emitter.on('tick', this.tick, this)
++      this.stops.push(onPointer(({ x, y }) => this.onMouseMove(x, y)))
++      this.stops.push(onResize(() => this.onResize()))
++      this.stops.push(onScroll((scrollY) => this.onScroll(scrollY)))
++      this.startFrame()
+ 
+       this.objects.forEach((object) => {
+         object.el.addEventListener('mousedown', this.objectDragStart.bind(this))
+@@ -427,6 +404,11 @@ const cnNum = ['澹?, '璐?, '鍙?, '鑲?, '浼?, '闄?, '鏌?, '鎹?, '鐜?]
+       })
+     }
+ 
++    startFrame() {
++      if (this.unframe) return
++      this.unframe = onFrame((time) => this.tick(time))
++    }
++
+     /**
+      * Intersect handler
+      */
+@@ -459,7 +441,7 @@ const cnNum = ['澹?, '璐?, '鍙?, '鑲?, '浼?, '闄?, '鏌?, '鎹?, '鐜?]
+       e.preventDefault()
+ 
+       const delta = performance.now() - this.lastTouch
+-      if (delta < Ticker.delta) return
++      if (delta < frameDelta()) return
+ 
+       const touch = e.touches[0]
+       this.updateMousePosition(touch.clientX, touch.clientY)
+@@ -1088,56 +1070,27 @@ const cnNum = ['澹?, '璐?, '鍙?, '鑲?, '浼?, '闄?, '鏌?, '鎹?, '鐜?]
+     }
+ 
+     .s__smiley {
++      @include flex(row, center, center);
++
+       position: relative;
+       z-index: 2;
+ 
+-      display: block;
+       width: var(--smiley-size);
+       height: var(--smiley-size);
+ 
+       background: color(primary);
+-      border-radius: 999rem;
++      border: 1.5px solid color-mix(in srgb, #{color(accent)} 70%, transparent);
++      box-shadow: inset 0 0 0 3px color(primary);
++
++      color: color(accent);
+ 
+       animation: sm-way-sway 14s ease-in-out infinite alternate;
+       will-change: transform;
+ 
+-      circle.sw-ring {
+-        fill: none;
+-        stroke: color-mix(in srgb, color(secondary) 60%, transparent);
+-        stroke-width: 1.4;
+-        stroke-dasharray: 1.6 4;
+-      }
+-
+-      rect.sw-hole {
+-        fill: none;
+-        stroke: color(secondary);
+-        stroke-width: 2.2;
+-      }
+-
+-      path.sw-ridge {
+-        fill: none;
+-        stroke: color(secondary);
+-        stroke-linecap: round;
+-        stroke-linejoin: round;
+-        stroke-width: 1.9;
+-      }
+-
+-      path.sw-trail {
+-        fill: none;
+-        stroke: color-mix(in srgb, color(secondary) 72%, transparent);
+-        stroke-dasharray: 2.6 2.2;
+-        stroke-linecap: round;
+-        stroke-width: 1.6;
+-      }
+-
+-      circle.sw-sun {
+-        fill: color(accent);
+-      }
+-
+-      .sw-pips circle {
+-        fill: color(accent);
+-
+-        opacity: 0.85;
++      :global(svg) {
++        display: block;
++        width: 62%;
++        height: 62%;
+       }
+     }
+ 
+@@ -1257,7 +1210,8 @@ const cnNum = ['澹?, '璐?, '鍙?, '鑲?, '浼?, '闄?, '鏌?, '鎹?, '鐜?]
+       will-change: transform;
+ 
+       &:before {
+-        mask: url('/images/sprite-vanish.png');
++        mask: url('/images/ink-vanish.svg');
++        mask-mode: luminance;
+       }
+ 
+       &.is-waiting {
+@@ -1718,7 +1672,9 @@ const cnNum = ['澹?, '璐?, '鍙?, '鑲?, '浼?, '闄?, '鏌?, '鎹?, '鐜?]
+ 
+         &,
+         .a__inner {
+-          mask: url('/images/sprite-vanish.png') left/3000% 100%;
++          mask: url('/images/ink-vanish.svg') left / 3000% 100%;
++          mask-mode: luminance;
++          -webkit-mask: url('/images/ink-vanish.svg') left / 3000% 100%;
+           animation: vanish 0.75s steps(29, end) 1 both;
+         }
+ 

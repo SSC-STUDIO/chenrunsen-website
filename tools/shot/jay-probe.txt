@@ -1,0 +1,10 @@
+﻿t=2000 {"has3D":true,"frames":4,"phase":"合并静态物体","town":"town scene-ready is-entering","calls":1,"tris":1,"reduced":false}
+t=6000 {"has3D":true,"frames":12,"phase":"合并静态物体","town":"town scene-ready","calls":1,"tris":1,"reduced":false}
+t=12000 {"has3D":true,"frames":29,"phase":"合并静态物体","town":"town scene-ready","calls":1,"tris":1,"reduced":false}
+t=20000 {"has3D":true,"frames":50,"phase":"合并静态物体","town":"town scene-ready","calls":1,"tris":1,"reduced":false}
+--- logs ---
+warn: THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.
+warn: Allow attribute will take precedence over 'allowfullscreen'.
+warn: [.WebGL-0x24cc00192200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)
+shot: C:\Users\Administrator\OneDrive\Documents\My-Program\ChenRunsen-Website\tools\shot\jay-town-shots\probe.png
+

@@ -1,0 +1,248 @@
+﻿diff --git a/src/styles/site/_shell.scss b/src/styles/site/_shell.scss
+index 04b629d..cc72fe4 100644
+--- a/src/styles/site/_shell.scss
++++ b/src/styles/site/_shell.scss
+@@ -1,5 +1,5 @@
+ /**
+- * Site shell styles (body frame, wrapper, intro, mount, contrast mask, reveals)
++ * 鐮斿ⅷ澹冲眰 鈥斺€?瀹ｇ焊鐢诲績銆佹澗澧ㄨ竟妗嗐€佺炕鑹插笜銆佹磭澧ㄦ樉褰?  */
+ 
+ @use "../helpers/colors" as *;
+@@ -18,7 +18,7 @@ body {
+   }
+ }
+ 
+-/* Wrapper */
++/* 鐢诲績锛氬绾稿簳锛屽洓鍛ㄨ鍑鸿瑁辫竟 */
+ 
+ .site-wrapper {
+   position: relative;
+@@ -56,7 +56,7 @@ html.is-subpage-ready {
+   }
+ }
+ 
+-/* Mount (border frame behind the wrapper) */
++/* 瑁呰１杈癸細鐢诲績鑳屽悗鐨勬澗澧ㄦ */
+ 
+ .site-mount {
+   position: absolute;
+@@ -83,7 +83,7 @@ body.is-subpage {
+   }
+ }
+ 
+-/* Contrast mask (theme toggle sweep) */
++/* 缈昏壊甯橈細鏄庢殫鍒囨崲鏃舵í sweep 涓€灞傚绾?*/
+ 
+ .site-contrast-mask {
+   position: fixed;
+@@ -116,167 +116,7 @@ body.is-subpage {
+   }
+ }
+ 
+-/* Intro (homepage preloader) */
+-
+-.site-intro {
+-  position: fixed;
+-  top: 0;
+-  left: 0;
+-  z-index: 50;
+-
+-  width: 100%;
+-  height: 100%;
+-
+-  background:
+-    radial-gradient(90% 70% at 50% 115%, color-mix(in srgb, #{color(accent)} 12%, transparent) 0%, transparent 62%),
+-    linear-gradient(180deg, color(primary) 0%, color(primary) 72%, color-mix(in srgb, #{color(secondary)} 6%, transparent) 100%);
+-
+-  &__status {
+-    position: absolute;
+-    bottom: 2.25rem;
+-    left: 50%;
+-    z-index: 1;
+-
+-    margin: 0;
+-
+-    color: color(accent);
+-    font: 400 10px / 1 font-family(fraktion);
+-    letter-spacing: 0.28em;
+-    text-transform: none;
+-    white-space: nowrap;
+-
+-    transform: translate3d(-50%, 0, 0);
+-    opacity: 0;
+-
+-    @include mq(phone) {
+-      bottom: 1.5rem;
+-
+-      font-size: 9px;
+-      letter-spacing: 0.22em;
+-    }
+-  }
+-
+-  .sb-logo {
+-    position: absolute;
+-    top: 50%;
+-    left: 50%;
+-
+-    width: 3rem;
+-    height: 3rem;
+-
+-    transform: translate3d(-50%, -50%, 0);
+-
+-    @include mq(phone) {
+-      width: 1.875rem;
+-      height: 1.875rem;
+-    }
+-
+-    .sb__path {
+-      position: absolute;
+-
+-      background: color(secondary);
+-
+-      &--v {
+-        top: 0;
+-
+-        width: 14.2857%;
+-        height: 100%;
+-
+-        transform-origin: 50% 100%;
+-
+-        &-1 {
+-          left: 0;
+-        }
+-
+-        &-2 {
+-          left: 21.3214%;
+-        }
+-
+-        &-3 {
+-          left: 43.2143%;
+-        }
+-
+-        &-4 {
+-          left: 64.7857%;
+-        }
+-
+-        &-5 {
+-          right: 0;
+-        }
+-      }
+-
+-      &--h {
+-        width: 7.5%;
+-        height: 6%;
+-
+-        &-1 {
+-          top: 0;
+-          left: 14.2857%;
+-
+-          transform-origin: 100% 0;
+-        }
+-
+-        &-2 {
+-          left: 57.5%;
+-          bottom: 0;
+-
+-          transform-origin: 0 0;
+-        }
+-
+-        &-3 {
+-          right: 14.2857%;
+-          bottom: 0;
+-
+-          transform-origin: 0% 0;
+-        }
+-      }
+-    }
+-  }
+-
+-  &__border {
+-    --width: 1rem;
+-
+-    position: absolute;
+-
+-    background: color(secondary);
+-
+-    @include mq(phone) {
+-      --width: 0.5rem;
+-    }
+-
+-    &--top {
+-      top: 0;
+-      left: 0;
+-
+-      width: 100%;
+-      height: var(--width);
+-
+-      transform-origin: 50% 0;
+-    }
+-
+-    &--left,
+-    &--right {
+-      top: 0;
+-      left: 0;
+-
+-      width: var(--width);
+-      height: 100%;
+-    }
+-
+-    &--left {
+-      transform-origin: 0 50%;
+-    }
+-
+-    &--right {
+-      left: auto;
+-      right: 0;
+-
+-      transform-origin: 100% 50%;
+-    }
+-  }
+-}
+-
+-/* Scroll reveal (subpage [data-reveal] elements) */
++/* 娲囧ⅷ鏄惧奖锛氬瓙椤?[data-reveal] */
+ 
+ [data-reveal] {
+   opacity: 0;
+diff --git a/src/styles/site/_signature.scss b/src/styles/site/_signature.scss
+index 53cd7c0..f2b47cc 100644
+--- a/src/styles/site/_signature.scss
++++ b/src/styles/site/_signature.scss
+@@ -515,7 +515,7 @@ html.theme-contrasted[data-daypart='dusk'] {
+   will-change: transform;
+ }
+ 
+-sen-work,
++scroll-leaf,
+ .p-card {
+   transform: perspective(900px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+   transition: transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+diff --git a/src/styles/site/_text.scss b/src/styles/site/_text.scss
+index ea4a14b..a4bd4c5 100644
+--- a/src/styles/site/_text.scss
++++ b/src/styles/site/_text.scss
+@@ -1,5 +1,5 @@
+ /**
+- * Global styles for text elements
++ * 姝ｆ枃鎺掔増 鈥斺€?瀹嬩綋琛屾皵銆侀绛剧珫鎺掋€佺绾告钀?  */
+ 
+ p {
+@@ -10,4 +10,16 @@ p {
+   &:last-child {
+     margin-bottom: 0;
+   }
+-}
+\ No newline at end of file
++}
++
++/* 绔栨帓棰樼锛氫粠鍙冲線宸︼紝瀛楄窛鎷夊紑濡傝酱涓婄鏉?*/
++.t-titling {
++  writing-mode: vertical-rl;
++  text-orientation: mixed;
++  letter-spacing: 0.28em;
++}
++
++/* 琛岄缂╄繘涓ゅ瓧锛屼俊绗哄彛鍚?*/
++.t-indent {
++  text-indent: 2em;
++}

@@ -1,0 +1,74 @@
+﻿{
+  "url": "http://127.0.0.1:4402/jay-town/",
+  "expected": 11,
+  "boardsInScene": 11,
+  "missing": [],
+  "extra": [],
+  "guideBoards": 5,
+  "filesOnDisk": 22,
+  "filesServed": 15,
+  "neverServed": [],
+  "mediaRequests": [
+    "200 campus-0512.jpg",
+    "200 class-0512.jpg",
+    "200 cover-bedtime-stories-2016.jpg",
+    "200 cover-dragon-rider-2005.jpg",
+    "200 cover-fantasy-2001.jpg",
+    "200 cover-jay-2000.jpg",
+    "200 cover-november-chopin-2005.jpg",
+    "200 cover-run-away-2007.jpg",
+    "200 drive-1024.jpg",
+    "200 pig.jpg",
+    "200 school-1024.jpg",
+    "206 campus-0512.mp4",
+    "206 class-0512.mp4",
+    "206 drive-1024.mp4",
+    "206 school-1024.mp4"
+  ],
+  "videos": [
+    {
+      "name": "jayMedia:school-life",
+      "paused": false,
+      "time": 0,
+      "readyState": 4,
+      "w": 1024,
+      "h": 576,
+      "err": null
+    },
+    {
+      "name": "jayMedia:classroom",
+      "paused": false,
+      "time": 0.01,
+      "readyState": 4,
+      "w": 720,
+      "h": 812,
+      "err": null
+    },
+    {
+      "name": "jayMedia:campus-walk",
+      "paused": false,
+      "time": 0.01,
+      "readyState": 4,
+      "w": 720,
+      "h": 812,
+      "err": null
+    },
+    {
+      "name": "jayMedia:evening-drive",
+      "paused": false,
+      "time": 0.02,
+      "readyState": 4,
+      "w": 1024,
+      "h": 576,
+      "err": null
+    }
+  ],
+  "videosPlaying": 4,
+  "navItems": 11,
+  "navThumbsLoaded": 11,
+  "brokenThumbs": [],
+  "failedRequests": [],
+  "abortedRangeRequests": 0
+}
+MEDIA OK
+

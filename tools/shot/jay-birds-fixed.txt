@@ -1,0 +1,24 @@
+﻿scene ready, frames = 4
+{
+  "cameraTravel": 1.9851812459184692,
+  "cameraYawSwing": 0,
+  "uFlap": 4.8,
+  "flockInstances": 7,
+  "flockVertexMax": 0,
+  "crowCount": 4,
+  "crowMove": [
+    0.4949677071215165,
+    0.30358546599894026,
+    0.09424512533163718,
+    0.4279858546003368
+  ],
+  "frames": 67,
+  "spanMs": 9005.599999999627,
+  "fps": 7.439815226081857
+}
+look: {"crow":[0,0,0],"cam":[0,2.1875570814522405,3.244183710992492]}
+shot: C:\Users\Administrator\OneDrive\Documents\My-Program\ChenRunsen-Website\tools\shot\jay-town-shots\birds-stop0.png
+look: {"crow":[0,0,0],"cam":[0,2.1875570814522405,3.244183710992492]}
+shot: C:\Users\Administrator\OneDrive\Documents\My-Program\ChenRunsen-Website\tools\shot\jay-town-shots\birds-stop3.png
+console errors: [ '@bilibili/bili-user-fingerprint(report): report is not found' ]
+

@@ -1,0 +1,12 @@
+﻿[
+ "Group name=wireCrows children=4",
+ "Group name=- children=0",
+ "Group name=- children=0",
+ "Group name=- children=0",
+ "Group name=- children=0"
+]
+tickType function
+crowPos [["0.00","0.00","0.00"],["0.00","0.00","0.00"],["0.00","0.00","0.00"],["0.00","0.00","0.00"]]
+bodyRot t0 [null,null,null,null]
+bodyRot t1 [null,null,null,null]
+
