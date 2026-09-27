@@ -63,6 +63,15 @@ const MASK_MOVE = 0.0004
 const MOVE_EPS = 0.0001
 /** Camera turn that invalidates a projection, in radians.  ~0.06 degrees. */
 const TURN_EPS = 0.001
+/**
+ * Below this fraction of visible cells the picture is not shown at all.
+ *
+ * Deliberately well under a half: a screen half-hidden behind a lamp post
+ * should still play.  This is for the case where almost nothing of it is in
+ * view, where showing the surviving slivers is both pointless and the most
+ * likely thing to look like video leaking through a wall.
+ */
+const BURIED_BELOW = 0.12
 /** Beyond this the screen is a few pixels of haze and not worth masking. */
 const MASK_RANGE = 90
 /** Beyond this nothing is projected at all. */
@@ -82,7 +91,7 @@ export class ScreenHub {
   private maskCache = new Map<number, ScreenMask>()
   /** The last mask built per zone, kept so it survives between refreshes. */
   /** The last silhouette built per zone, kept so it survives between refreshes. */
-  private heldMask = new Map<number, { clip: string; coverage: number }>()
+  private heldMask = new Map<number, { runs: number[]; coverage: number }>()
 
   private corners = makeCorners()
   private quad: Quad = [
@@ -401,7 +410,7 @@ export class ScreenHub {
        * refreshes is what put the video in front of walls. */
       const held = this.heldMask.get(spec.zone)
       let coverage = held?.coverage ?? 1
-      let clip = held?.clip ?? ''
+      let runs = held?.runs ?? []
       let draw = Boolean(projected) && matrix !== ''
 
       /* The mask is only worth building for a screen that has something to
@@ -412,22 +421,32 @@ export class ScreenHub {
         const result = this.maskFor(spec.zone).update(
           renderer, depthTexture, camera, this.centre, camera.near, camera.far,
         )
-        clip = result.clip
+        runs = result.runs
         coverage = result.coverage
-        this.heldMask.set(spec.zone, { clip, coverage })
+        this.heldMask.set(spec.zone, { runs, coverage })
+        portal.setClip(runs, result.width, result.height)
+        portal.useClip(runs.length > 0)
       } else if (!portal.hasMedia) {
         /* Nothing loaded means nothing to hide, and a stale silhouette from a
          * previous song would clip the placeholder to the wrong shape. */
         this.heldMask.delete(spec.zone)
-        clip = ''
+        runs = []
         coverage = 1
+        portal.useClip(false)
       }
 
-      /* Fully hidden: the screen still belongs to the world, so it keeps its
-       * frame and its curtain and only the player's picture goes away. */
-      if (draw && coverage <= 0) draw = false
+      /* Mostly buried: show nothing rather than a handful of visible slivers.
+       *
+       * A screen behind a building should be *gone*, not reduced to a few
+       * cells of picture that have to be cut out of it -- and at that point the
+       * cut is delicate enough that being slightly wrong about it reads as
+       * video leaking through the wall, which is what was reported.  The
+       * threshold is set well below half so that a screen half in shadow still
+       * plays. */
+      const buried = coverage < BURIED_BELOW
+      portal.setPictureVisible(draw && !buried)
 
-      portal.place(draw ? matrix : '', clip, coverage)
+      portal.place(draw ? matrix : '', coverage)
       portal.show(draw)
 
       nextInfo.push({

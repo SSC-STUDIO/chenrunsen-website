@@ -92,12 +92,15 @@ const MASK_VERT = /* glsl */ `
 `
 
 export type MaskResult = {
-  /** A CSS `clip-path` for the portal, or `''` when nothing needs clipping. */
-  clip: string
+  /** Visible cells per row, as [rowIndex, firstCell, lastCell] triples. */
+  runs: number[]
   /** Raw pixels, one byte per cell, row-major and top-down.  For tests. */
   grid: Uint8Array
   /** Fraction of cells the world does not hide. */
   coverage: number
+  /** Cell counts, so a consumer can turn runs into its own coordinates. */
+  width: number
+  height: number
 }
 
 export class ScreenMask {
@@ -196,10 +199,13 @@ export class ScreenMask {
       }
     }
 
-    if (lit === 0) return { clip: 'inset(100% 0 0 0)', grid: this.grid, coverage: 0 }
-    if (lit === this.cells) return { clip: '', grid: this.grid, coverage: 1 }
-
-    return { clip: this.clipFromGrid(), grid: this.grid, coverage: lit / this.cells }
+    return {
+      runs: lit === 0 ? [] : this.runsFromGrid(),
+      grid: this.grid,
+      coverage: lit / this.cells,
+      width: this.width,
+      height: this.height,
+    }
   }
 
   /**
@@ -218,34 +224,35 @@ export class ScreenMask {
    * A `clip-path` is resolved synchronously as a style, so there is no window
    * at all: the element either has the clip or it does not, and it is set in the
    * same frame the grid was computed.  It is also resolution-independent -- the
-   * polygon is in pixels and the browser antialiases its edges, so the staircase
-   * a coarse grid would show along a diagonal is softened rather than left as
-   * the hard cell steps a nearest-neighbour mask produced.
+   * browser antialiases the clip's edges, so the staircase a coarse grid would
+   * show along a diagonal is softened rather than left as the hard cell steps a
+   * nearest-neighbour mask produced.
    *
-   * It is built from one box per row of visible cells, joining any run of
-   * adjacent cells into a single rectangle: a typical silhouette is a few dozen
-   * boxes rather than one per cell.
+   * The clip has to be able to describe *several* disjoint rectangles, because
+   * one silhouette can have holes -- the gap between a van and a wall.  Neither
+   * `polygon()` nor `inset()` can express that, so the runs are handed out and
+   * the portal builds an SVG `<clipPath>` from them.
+   *
+   * The first attempt at this emitted `path("M0% 0%H50%V50%H0%Z")` and was
+   * **silently a no-op**: Chrome computes `clip-path: path()` with percentage
+   * coordinates to `none`, so nothing was clipped at all and the video drew at
+   * full size over the world, which is exactly what was reported.  Hence runs
+   * rather than a path -- see `media-portal.ts`.
    */
-  private clipFromGrid(): string {
-    const parts: string[] = []
+  private runsFromGrid(): number[] {
+    const runs: number[] = []
     for (let y = 0; y < this.height; y++) {
       let runStart = -1
       for (let x = 0; x <= this.width; x++) {
         const on = x < this.width && this.grid[y * this.width + x] === 1
         if (on && runStart < 0) runStart = x
         if (!on && runStart >= 0) {
-          const x0 = (runStart / this.width) * 100
-          const x1 = (x / this.width) * 100
-          const y0 = (y / this.height) * 100
-          const y1 = ((y + 1) / this.height) * 100
-          parts.push(`M${x0}% ${y0}%H${x1}%V${y1}%H${x0}%Z`)
+          runs.push(y, runStart, x)
           runStart = -1
         }
       }
     }
-    /* A path with several closed subpaths is not expressible as a polygon, so
-     * this uses `path()` -- supported everywhere `clip-path` is used here. */
-    return parts.length ? `path("${parts.join('')}")` : 'inset(100% 0 0 0)'
+    return runs
   }
 
   dispose() {

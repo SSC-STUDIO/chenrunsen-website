@@ -85,7 +85,11 @@ export class MediaPortal {
   private state: PortalState = 'unloaded'
   private songId = ''
   private visible = false
-  private clip = ''
+  private clipKey = ''
+  private clipActive = false
+  private pictureVisible = true
+  private clipPathEl: SVGPathElement
+  private clipId = ''
 
   constructor({ spec, host, onState }: PortalOptions) {
     this.spec = spec
@@ -111,7 +115,29 @@ export class MediaPortal {
     this.badge = document.createElement('span')
     this.badge.className = 'media-portal__badge'
 
-    this.wrapper.append(this.veil, this.stage, this.badge)
+    /* The occlusion clip.  An SVG `<clipPath>` rather than a CSS shape function
+     * because a silhouette can be several disjoint rectangles and only a
+     * clipPath can say so -- see `setClip`.  It is attached to the wrapper so it
+     * travels with the portal, and hidden, because an SVG with no viewport is
+     * still a box in the layout otherwise. */
+    this.clipId = `portal-clip-${spec.zone}`
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('aria-hidden', 'true')
+    svg.setAttribute('width', '0')
+    svg.setAttribute('height', '0')
+    svg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden'
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+    const clip = document.createElementNS('http://www.w3.org/2000/svg', 'clipPath')
+    clip.setAttribute('id', this.clipId)
+    /* 0..1 fractions of the portal's own box, so the same numbers are right at
+     * any size the screen happens to be drawn. */
+    clip.setAttribute('clipPathUnits', 'objectBoundingBox')
+    this.clipPathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    clip.appendChild(this.clipPathEl)
+    defs.appendChild(clip)
+    svg.appendChild(defs)
+
+    this.wrapper.append(this.veil, this.stage, this.badge, svg)
     this.host.appendChild(this.wrapper)
   }
 
@@ -265,38 +291,89 @@ export class MediaPortal {
   }
 
   /**
+   * Apply the occlusion silhouette.
+   *
+   * `runs` are `[row, firstCell, lastCell]` triples in grid coordinates and
+   * `cols`/`rows` are the grid's size; one rectangle per run goes into the
+   * portal's SVG `<clipPath>`.  Two earlier attempts at this are worth not
+   * repeating:
+   *
+   *  - **`mask-image` with an encoded PNG.**  It works, but the browser decodes
+   *    it asynchronously, so for a frame or two the element has no mask and
+   *    paints unclipped -- video hanging in front of walls.
+   *  - **`clip-path: path(...)` with percentage coordinates.**  Silently a
+   *    no-op: Chrome computes it to `none`, so nothing was clipped at all and a
+   *    distant screen drew at full size over thirty metres of street.  That is
+   *    the black rectangle that was reported.
+   *
+   * An SVG `clipPath` is the construct that both applies synchronously *and*
+   * can describe several disjoint rectangles -- which a single `polygon()`
+   * cannot, and a silhouette with a hole in it is the normal case rather than
+   * an exotic one.
+   */
+  setClip(runs: number[], cols: number, rows: number): void {
+    const key = runs.length ? `${cols}x${rows}:${runs.join(',')}` : ''
+    if (key === this.clipKey) return
+    this.clipKey = key
+
+    if (!runs.length) {
+      this.clipPathEl.setAttribute('d', '')
+      this.useClip(false)
+      return
+    }
+
+    /* **One `<path>`, one subpath per run.**  A `clipPath` unions everything
+     * inside it, so disjoint rectangles need no extra elements -- and staying
+     * with a single child avoids the trap that a `clipPath` whose child has an
+     * explicit box clips to that box rather than to the union.
+     *
+     * `clipPathUnits="objectBoundingBox"` means the numbers are 0..1 fractions
+     * of the portal's own box, so the same path is right at whatever size the
+     * screen happens to be drawn. */
+    const d: string[] = []
+    for (let i = 0; i < runs.length; i += 3) {
+      const x0 = (runs[i + 1] / cols).toFixed(5)
+      const x1 = (runs[i + 2] / cols).toFixed(5)
+      const y0 = (runs[i] / rows).toFixed(5)
+      const y1 = ((runs[i] + 1) / rows).toFixed(5)
+      d.push(`M${x0} ${y0}H${x1}V${y1}H${x0}Z`)
+    }
+    this.clipPathEl.setAttribute('d', d.join(''))
+    this.useClip(true)
+  }
+
+  /** Show or hide the picture entirely, keeping the clip in place. */
+  setPictureVisible(visible: boolean): void {
+    if (this.pictureVisible === visible) return
+    this.pictureVisible = visible
+    this.stage.style.visibility = visible ? 'visible' : 'hidden'
+  }
+
+  /**
    * Place the portal on the projected quad.
    *
-   * `matrix` is the CSS `matrix3d(...)` from `projection.ts`; `clip` is the
-   * occlusion silhouette from `mask.ts`, or `''` when the screen is clear.
-   *
-   * The clip goes on the *veil as well as the wrapper*, and that is the whole
-   * reason the veil exists.  Clipping only the player leaves the cut edge of the
-   * video hard against live geometry, which reads as a bug; with the same
-   * silhouette on a dark panel underneath, the edge becomes a dark screen edge
-   * instead.
-   *
-   * A `clip-path` and not a `mask-image`, because the mask version had to be
-   * handed over as an encoded image and the browser decodes those
-   * asynchronously -- so for a frame or two the element had no mask and painted
-   * unclipped, which is what showed video through walls.
+   * `matrix` is the CSS `matrix3d(...)` from `projection.ts`.  The occlusion
+   * silhouette is applied separately, by `setClip`.
    */
-  place(matrix: string, clip: string, coverage: number): void {
+  place(matrix: string, coverage: number): void {
     if (!matrix) {
       this.wrapper.style.visibility = 'hidden'
       return
     }
     this.wrapper.style.transform = matrix
     this.wrapper.style.visibility = 'visible'
-
-    if (clip !== this.clip) {
-      this.clip = clip
-      for (const el of [this.wrapper, this.veil]) {
-        el.style.setProperty('clip-path', clip)
-        el.style.setProperty('-webkit-clip-path', clip)
-      }
-    }
     this.wrapper.style.setProperty('--screen-coverage', String(coverage))
+  }
+
+  /** Point both the portal and its veil at the occlusion clipPath. */
+  useClip(active: boolean): void {
+    if (active === this.clipActive) return
+    this.clipActive = active
+    const value = active ? `url(#${this.clipId})` : ''
+    for (const el of [this.wrapper, this.veil]) {
+      el.style.setProperty('clip-path', value)
+      el.style.setProperty('-webkit-clip-path', value)
+    }
   }
 
   /**

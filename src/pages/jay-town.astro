@@ -1,5 +1,6 @@
 ---
 import { songs } from '../features/jay-town/songs'
+import { MEDIA, thumbUrl, ZONE_LABELS } from '../features/jay-town/media'
 
 const stops = [
   { name: '樱花街口', mood: '把第一首歌，留给春天。' },
@@ -59,6 +60,10 @@ const stops = [
         <button class="scene-failure__action" id="failure-songs" type="button">打开歌单</button>
       </div>
 
+      <button class="stop-media" id="stop-media" type="button" aria-label="停止播放" title="停止播放" hidden>
+        <span aria-hidden="true">■</span> 停止播放
+      </button>
+
       <div class="place-stamp" aria-live="polite" aria-atomic="true">
         <span class="place-stamp__index" id="place-index">01 / 05</span>
         <strong id="place-name">樱花街口</strong>
@@ -92,6 +97,41 @@ const stops = [
         <span class="move-pad__center" aria-hidden="true">✳</span>
         <button class="move-pad__right" type="button" data-move-x="1" data-move-z="0" aria-label="向右走" title="向右走">→</button>
         <button class="move-pad__down" type="button" data-move-x="0" data-move-z="1" aria-label="向后走" title="向后走">↓</button>
+      </div>
+
+      {/* 素材导航（表层）。
+        *
+        * 用户要的是「表层用来做个导航，导航到各个图片」：小镇里每一件素材
+        * ——六张唱片封面、一张猪、四段自己的影像——都在这里有一张缩略图，
+        * 点一下就把镜头带到它跟前。缩略图直接由 `media.ts` 那张表渲染，
+        * 所以「场景里摆了哪些」和「这里能导航到哪些」不可能对不上。 */}
+      <div class="town-nav" id="town-nav" data-nav-open="false">
+        <button class="town-nav__toggle" id="town-nav-toggle" type="button" aria-expanded="false" aria-controls="town-nav-strip">
+          <span class="town-nav__toggle-icon" aria-hidden="true">▦</span>
+          <span class="town-nav__toggle-label">素材 <b>{MEDIA.length}</b></span>
+        </button>
+        <div class="town-nav__strip" id="town-nav-strip">
+          <p class="town-nav__hint">小镇里的每一样东西，点一下走过去</p>
+          <ol class="town-nav__list">
+            {MEDIA.map((item) => (
+              <li>
+                <button
+                  class="town-nav__item"
+                  type="button"
+                  data-media-id={item.id}
+                  data-media-zone={item.zone}
+                  data-media-target={item.target}
+                  title={`${item.title} · ${item.caption}`}
+                >
+                  <img class="town-nav__thumb" src={thumbUrl(item.file)} alt="" width="72" height="54" decoding="async" />
+                  <span class="town-nav__text"><b>{item.title}</b><small>{item.caption}</small></span>
+                  <span class="town-nav__where">0{item.target + 1} {ZONE_LABELS[item.target]}</span>
+                  {item.kind === 'video' && <span class="town-nav__badge" aria-hidden="true">▶</span>}
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
       </div>
 
       <aside class="song-drawer" id="song-drawer" aria-labelledby="song-drawer-title" hidden>
@@ -199,6 +239,20 @@ const stops = [
         })
       }
 
+      /* 缩略图条的高亮挂在 `onZone` 上而不是塞进 `updateZone`：站名是「地名」，
+       * 缩略图是「素材」，两者只是恰好同属一站，分开写以后改任一边都不会
+       * 牵着另一边走。`onZone` 要在挂载场景之前就存在，所以早读一次 DOM。 */
+      const mediaButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-media-id]')]
+      function markCurrentMedia(zone: number) {
+        mediaButtons.forEach((button) => {
+          button.classList.toggle('is-current', Number(button.dataset.mediaZone) === zone)
+        })
+      }
+      function onZone(index: number) {
+        updateZone(index)
+        markCurrentMedia(index)
+      }
+
       let scene: Scene | null = null
 
       /* --------------------------- loading the world ---------------------------
@@ -276,7 +330,7 @@ const stops = [
             sceneStatus.hidden = true
             sceneFailure.hidden = false
           },
-          onZoneChange: updateZone,
+          onZoneChange: onZone,
             })
           }).catch(failScene)
         } catch (error) {
@@ -378,6 +432,7 @@ const stops = [
        * of its job is the drawer's own state and the row highlight. */
       function updatePlayer() {
         rows.forEach((row) => row.classList.toggle('is-current', row.dataset.songId === currentSongId))
+        setStopVisible(openSongId !== '')
       }
 
       /* ------------------------- playing in the world -------------------------
@@ -421,6 +476,24 @@ const stops = [
         openSongId = ''
         scene?.setSong(null)
         updatePlayer()
+      }
+
+      /* ------------------------------- stop button ------------------------------
+       *
+       * Asked for plainly, and it was a fair ask: once the song starts on its own
+       * there has to be a way to stop it that is not "walk twenty metres away".
+       * Visible only while something is playing, and it is the one control that
+       * appears without being asked for, so it stays small and out of the top
+       * corner where the day/night and help buttons live. */
+      const stopButton = document.querySelector('#stop-media') as HTMLButtonElement
+      stopButton.addEventListener('click', () => {
+        closeVideo()
+        stopButton.hidden = true
+        stopButton.blur()
+      })
+
+      function setStopVisible(visible: boolean): void {
+        stopButton.hidden = !visible
       }
 
       function stepSong(direction: number) {
@@ -509,6 +582,40 @@ const stops = [
         const song = findSong(event.detail?.songId || '')
         if (song) openSong(song)
       }) as EventListener)
+
+      /* ------------------------- 素材导航：表层那一半 -------------------------
+       *
+       * 缩略图是 Astro 在构建时按 `media.ts` 渲染的，这里只负责交互：
+       * 点一下 → `scene.goTo(target)` 把镜头带到那一站；站内每块牌子上的
+       * 命中盒走的是同一个 `goTo`（见 `crossing/world/jaymedia.js`）。
+       *
+       * 场景还没挂上时按钮也在（缩略图是静态渲染的），点下去只是没反应；
+       * 所以这里等 `scene` 存在才真跳，并且不做假动画。 */
+      const townNav = document.querySelector('#town-nav') as HTMLElement | null
+      const townNavToggle = document.querySelector('#town-nav-toggle') as HTMLButtonElement | null
+
+      function setNavOpen(open: boolean) {
+        if (!townNav || !townNavToggle) return
+        townNav.dataset.navOpen = String(open)
+        townNavToggle.setAttribute('aria-expanded', String(open))
+      }
+      townNavToggle?.addEventListener('click', () => {
+        setNavOpen(townNav?.dataset.navOpen !== 'true')
+      })
+
+      mediaButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          const target = Number(button.dataset.mediaTarget)
+          if (!Number.isInteger(target)) return
+          scene?.goTo(target)
+          markCurrentMedia(target)
+          /* 手机上缩略图条铺满底部，选完自动收起，不然挡住路。 */
+          if (window.matchMedia('(max-width: 720px)').matches) setNavOpen(false)
+        })
+      })
+
+      /* 进来时先把第一站标上，免得缩略图条一开始谁都不高亮。 */
+      markCurrentMedia(currentZone)
 
       const heldPointers = new Map<number, { x: number; z: number; button: HTMLButtonElement }>()
       function updateMovement() {
@@ -755,7 +862,75 @@ const stops = [
   .drawer-handle:hover, .drawer-handle.is-open { background: #fffdf6; border-color: var(--pink); }
   .drawer-handle:hover .drawer-handle__bar, .drawer-handle.is-open .drawer-handle__bar { background: var(--pink-deep); }
 
+  /* Stops whatever is playing on a screen.  Deliberately one of the smallest
+     things on the page: it appears on its own the moment a song starts, and a
+     control nobody asked for should not compete with the town. */
+  .stop-media {
+    position: absolute;
+    z-index: 8;
+    right: max(26px, env(safe-area-inset-right));
+    top: max(86px, calc(env(safe-area-inset-top) + 86px));
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 11px;
+    border: 1px solid #fffdf6b8;
+    border-radius: 7px;
+    background: #173c3ecc;
+    color: #fffdf6;
+    font-size: 11px;
+    letter-spacing: .02em;
+    text-shadow: none;
+    backdrop-filter: blur(10px);
+  }
+  .stop-media span { font-size: 8px; color: #ed9caa; }
+  .stop-media:hover { background: #a64f64cc; }
+  .ui-hidden .stop-media { display: none !important; }
+  @media (max-width: 720px) {
+    .stop-media { top: auto; right: 12px; bottom: calc(max(9px, env(safe-area-inset-bottom)) + 246px); padding: 6px 9px; font-size: 10px; }
+  }
+
   .move-pad { display: none; }
+
+  /* ---------------------------- 素材导航（表层） ----------------------------
+   *
+   * 缩略图条贴在左下角、歌单按钮的上方。三条硬约束：
+   *  - `pointer-events: none` 在容器上、只有按钮本身可点，否则这条带子会把
+   *    整片画面的鼠标操作吃掉（画布要靠 pointerdown 拖拽转头）。
+   *  - 收起状态只留一个圆形按钮，不挡路。
+   *  - 小屏时缩略图条铺满底部，和站名导航不重叠。 */
+  .town-nav { position: absolute; z-index: 6; left: max(25px, env(safe-area-inset-left)); bottom: calc(max(28px, env(safe-area-inset-bottom)) + 118px); display: grid; gap: 8px; justify-items: start; pointer-events: none; }
+  .town-nav__toggle { display: flex; align-items: center; gap: 7px; padding: 8px 12px; border: 1px solid #fffdf6c4; border-radius: 8px; background: #f8f5ece8; color: var(--ink); box-shadow: 0 6px 20px #153c372e; backdrop-filter: blur(12px); pointer-events: auto; }
+  .town-nav__toggle-icon { font-size: 13px; line-height: 1; color: var(--teal); }
+  .town-nav__toggle-label { font: 600 11px/1 var(--sans); }
+  .town-nav__toggle-label b { color: var(--pink-deep); }
+  .town-nav__toggle[aria-expanded="true"] { background: #fffdf6f2; border-color: #fff; }
+  .town-nav__strip {
+    display: none;
+    width: min(430px, calc(100vw - 60px));
+    max-height: min(430px, calc(100svh - 200px));
+    overflow: auto;
+    padding: 12px 12px 10px;
+    border: 1px solid #d8e0db;
+    border-radius: 8px;
+    background: #faf8f2f5;
+    color: var(--ink);
+    box-shadow: 0 16px 50px #142e3047;
+    backdrop-filter: blur(16px);
+    pointer-events: auto;
+  }
+  .town-nav[data-nav-open="true"] .town-nav__strip { display: block; }
+  .town-nav__hint { margin: 0 0 9px; font: 11px/1.5 var(--serif); color: #5d6f68; }
+  .town-nav__list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+  .town-nav__item { position: relative; display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 10px; width: 100%; padding: 6px; border: 1px solid #dfe5dd; border-radius: 6px; background: #fffdf7; color: inherit; text-align: left; }
+  .town-nav__item:hover, .town-nav__item:focus-visible { border-color: var(--pink); background: #fff7f5; }
+  .town-nav__item.is-current { border-color: #255956; background: #eef4f1; }
+  .town-nav__thumb { width: 72px; height: 54px; object-fit: cover; border-radius: 3px; background: #e7e2d6; }
+  .town-nav__text { display: grid; gap: 2px; min-width: 0; }
+  .town-nav__text b { font: 600 13px/1.3 var(--serif); }
+  .town-nav__text small { overflow: hidden; font: 11px/1.3 var(--sans); color: #6d7a72; white-space: nowrap; text-overflow: ellipsis; }
+  .town-nav__where { font: 700 9px/1.3 var(--sans); color: #8b9a92; white-space: nowrap; }
+  .town-nav__badge { position: absolute; left: 60px; top: 40px; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: #173c3ed9; color: #fff; font-size: 8px; }
 
   .song-drawer { position: absolute; z-index: 15; left: max(25px, env(safe-area-inset-left)); bottom: calc(max(28px, env(safe-area-inset-bottom)) + 68px); display: flex; flex-direction: column; width: min(420px, calc(100% - 50px)); max-height: min(645px, calc(100svh - 135px)); border: 1px solid #d8e0db; border-radius: 8px; background: #faf8f2f5; color: var(--ink); box-shadow: 0 16px 50px #142e3047; backdrop-filter: blur(16px); }
   .drawer-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; padding: 18px 19px 11px; }
