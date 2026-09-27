@@ -67,7 +67,14 @@ export function setMediaPlayerPosition(x, z) {
 function makeVideoPlane(spec, w, h) {
   const video = document.createElement('video');
   video.src = mediaUrl(spec.file);
-  video.crossOrigin = 'anonymous';
+  /* **不要设 `crossOrigin`。**
+   *
+   * 素材是同源的，同源取像素本来就不受 CORS 限制；一旦给视频挂上
+   * `crossOrigin='anonymous'`，浏览器就改用 CORS 模式去取它，而这个静态
+   * 服务器（以及大多数静态托管）不给 `Access-Control-Allow-Origin`，
+   * 于是 `texImage2D` 直接抛 SecurityError —— 屏幕永远是黑的，控制台里
+   * 一句「The video element contains cross-origin data, and may not be loaded」。
+   * 这是第一版把它们拍成黑板的真正原因。 */
   video.loop = true;
   video.muted = true;
   video.playsInline = true;
@@ -334,11 +341,11 @@ function guideBoardTex(zone, items) {
 
 /** 每站一块站牌，立在车站月台与街道之间的空地上。 */
 const GUIDE_SPOTS = [
-  { zone: 0, x: 3.05, z: 10.2, face: -Math.PI / 2 },
-  { zone: 1, x: 20.9, z: 23.4, face: -Math.PI / 2 },
-  { zone: 2, x: -27.2, z: 33.6, face: Math.PI },
-  { zone: 3, x: 23.3, z: -7.6, face: -Math.PI / 2 },
-  { zone: 4, x: 4.9, z: -28.9, face: Math.PI },
+  { zone: 0, x: 3.3, z: 12.0, face: -Math.PI / 2 },
+  { zone: 1, x: 21.3, z: 30.2, face: Math.PI / 2 },
+  { zone: 2, x: -29.2, z: 32.6, face: Math.PI / 2 },
+  { zone: 3, x: 23.4, z: -5.2, face: -Math.PI / 2 },
+  { zone: 4, x: 3.3, z: -29.6, face: Math.PI },
 ];
 
 function buildGuideBoards(ctx, gotoStop) {
@@ -418,4 +425,23 @@ export const mediaIndex = () => MEDIA.map((m) => ({
   thumb: thumbUrl(m.file),
   source: m.source,
   where: m.on,
+}));
+
+/**
+ * 每件素材的落位（含坐标），给验收脚本取景用。
+ *
+ * `mediaIndex()` 是给界面用的（只关心显示什么），这一份是给工具用的：
+ * 要知道牌子立在哪、朝哪、多大，才能站到它正面拍一张。放在这里而不是
+ * 让脚本猜，是因为坐标只有一处真相 —— `media.ts`。
+ */
+export const mediaPlacements = () => MEDIA.map((m) => ({
+  id: m.id,
+  kind: m.kind,
+  zone: m.zone,
+  x: m.x,
+  z: m.z,
+  face: m.face,
+  y: m.y,
+  w: m.w,
+  h: m.w / m.aspect,
 }));

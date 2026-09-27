@@ -103,7 +103,7 @@ export const COVERS: TownMedia[] = [
     aspect: 1332 / 1264,
     zone: 1,
     target: 1,
-    x: 20.35, z: 26.4, w: 1.5, y: 1.5, face: Math.PI / 2,
+    x: 21.6, z: 25.6, w: 1.5, y: 1.5, face: -Math.PI / 2,
     on: '唱片小巷东侧橱窗（立着的一张）',
   },
   {
@@ -117,7 +117,7 @@ export const COVERS: TownMedia[] = [
     aspect: 972 / 1113,
     zone: 1,
     target: 1,
-    x: 22.9, z: 31.2, w: 1.34, y: 1.45, face: -Math.PI / 2,
+    x: 21.45, z: 31.4, w: 1.34, y: 1.45, face: Math.PI / 2,
     on: '唱片小巷西侧墙面（红帽衫那张）',
   },
   {
@@ -132,7 +132,7 @@ export const COVERS: TownMedia[] = [
     zone: 2,
     target: 2,
     // 竖幅，和广场上那台钢琴放一起
-    x: -25.7, z: 28.9, w: 0.92, y: 1.35, face: 0,
+    x: -28.0, z: 29.8, w: 0.92, y: 1.35, face: 0,
     on: '晴天广场 钢琴旁的立牌',
   },
   {
@@ -146,7 +146,7 @@ export const COVERS: TownMedia[] = [
     aspect: 500 / 661,
     zone: 4,
     target: 4,
-    x: 3.4, z: -27.0, w: 1.15, y: 1.6, face: Math.PI,
+    x: 2.9, z: -27.2, w: 1.15, y: 1.6, face: Math.PI,
     on: '七里香河堤 河边的公告墙',
   },
   {
@@ -160,7 +160,7 @@ export const COVERS: TownMedia[] = [
     aspect: 444 / 600,
     zone: 3,
     target: 3,
-    x: 24.5, z: -6.4, w: 1.05, y: 1.55, face: -Math.PI / 2,
+    x: 21.0, z: -6.0, w: 1.05, y: 1.55, face: Math.PI / 2,
     on: '花海车站 站台立柱后的海报框',
   },
   {
@@ -174,7 +174,7 @@ export const COVERS: TownMedia[] = [
     aspect: 500 / 1000,
     zone: 2,
     target: 2,
-    x: -30.0, z: 33.4, w: 0.95, y: 1.5, face: Math.PI / 2,
+    x: -29.4, z: 34.6, w: 0.95, y: 1.5, face: Math.PI / 2,
     on: '晴天广场 绘马架旁的灯箱',
   },
 
@@ -214,7 +214,7 @@ export const CLIPS: TownMedia[] = [
     zone: 3,
     target: 3,
     // 车站是离学校最近的一站（gakkomae 在校门口），放这里最合适
-    x: 21.2, z: -8.8, w: 2.3, y: 1.75, face: -Math.PI / 2,
+    x: 21.7, z: -8.2, w: 2.3, y: 1.75, face: Math.PI / 2,
     on: '花海车站 站台信息屏',
   },
   {
@@ -228,7 +228,7 @@ export const CLIPS: TownMedia[] = [
     aspect: 812 / 720,
     zone: 1,
     target: 1,
-    x: 24.55, z: 24.6, w: 1.35, y: 1.55, face: -Math.PI / 2,
+    x: 21.5, z: 24.7, w: 1.35, y: 1.55, face: Math.PI / 2,
     on: '唱片小巷 电器行橱窗（贴着东侧店面墙）',
   },
   {
@@ -242,7 +242,7 @@ export const CLIPS: TownMedia[] = [
     aspect: 812 / 720,
     zone: 2,
     target: 2,
-    x: -28.6, z: 36.2, w: 1.45, y: 1.6, face: 0,
+    x: -26.4, z: 33.4, w: 1.45, y: 1.6, face: -Math.PI / 2,
     on: '晴天广场 神社侧廊的小电视',
   },
   {
@@ -256,7 +256,7 @@ export const CLIPS: TownMedia[] = [
     aspect: 16 / 9,
     zone: 4,
     target: 4,
-    x: 6.2, z: -31.4, w: 2.0, y: 1.85, face: Math.PI,
+    x: 2.5, z: -31.0, w: 2.0, y: 1.85, face: Math.PI,
     on: '七里香河堤 河堤下的大屏',
   },
 ]

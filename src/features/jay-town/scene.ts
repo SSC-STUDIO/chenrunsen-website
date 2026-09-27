@@ -14,7 +14,7 @@ import { buildWorld } from './crossing/world/index.js'
 import { createEbike } from './crossing/world/ebike.js'
 import { screenRegistry, setScreenNight } from './crossing/world/jayscreen.js'
 import { ScreenHub, type ScreenInfo, type HubSong } from './screens/screen-hub'
-import { mediaIndex } from './crossing/world/jaymedia.js'
+import { mediaIndex, mediaPlacements } from './crossing/world/jaymedia.js'
 
 /** 页面缩略图导航要用的一条素材记录。 */
 type MediaEntry = ReturnType<typeof mediaIndex>[number]
@@ -527,7 +527,41 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   /* Dev handle.  The screens are the one part of this page whose correctness
    * cannot be read off the DOM, so the harness in `scripts/verify-jay-town.mjs`
    * needs a way in; it is inert in production. */
-  ;(window as unknown as { __jayTown?: unknown }).__jayTown = { scene, screens, player, world, camera, renderer, pipeline, media: mediaIndex }
+  ;(window as unknown as { __jayTown?: unknown }).__jayTown = {
+    scene, screens, player, world, camera, renderer, pipeline,
+    media: mediaIndex,
+    /* 验收脚本要靠落位把相机摆到每件素材的正面，见 `verify-media-shots.cjs`。 */
+    mediaPlacements,
+    /**
+     * 站到某个平面坐标上、朝给定的平面方向看。
+     *
+     * 存在的理由：`player.yaw` 的符号约定（forward = (-sin yaw, -cos yaw)）
+     * 光看代码很容易搞反，验收脚本第一版就把镜头对到了背后。与其在脚本里
+     * 反复猜符号，不如给一个「我在哪、我要看哪」的入口 —— 用平面坐标表达，
+     * 脚本不需要知道球面怎么算。
+     */
+    lookFrom(fromX, fromZ, atX, atZ, { eye = 1.62, lookUp = 0, pitch = 0 } = {}) {
+      player.pos.x = fromX
+      player.pos.z = fromZ
+      player.pos.y = world.heightAt(fromX, fromZ) + eye
+      const la = fromX / 160
+      const ph = fromZ / 160
+      const east: [number, number] = [Math.cos(la), -Math.sin(la)]
+      const north: [number, number] = [-Math.sin(la) * Math.sin(ph), -Math.cos(la) * Math.sin(ph)]
+      const dx = atX - fromX
+      const dz = atZ - fromZ
+      const de = dx * east[0] + dz * east[1]
+      const dn = dx * north[0] + dz * north[1]
+      /* forward = (-sin yaw, -cos yaw) 在 (east, north) 基下 —— 解这个方程得到 yaw。 */
+      player.yaw = Math.atan2(-de, -dn)
+      const horiz = Math.hypot(de, dn)
+      const target = world.heightAt(atX, atZ) + lookUp
+      player.pitch = pitch || Math.atan2(target - player.pos.y, Math.max(horiz, 0.01))
+      player.vel.set(0, 0, 0)
+      player.applyCamera(0)
+      return { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch }
+    },
+  }
   frame = requestAnimationFrame(tick)
 
   return {
