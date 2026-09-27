@@ -87,6 +87,8 @@ const { class: className, skip = '' } = Astro.props
     bubbles: Bubble[] = []
     ripples: Ripple[] = []
     lastTime = 0
+    /** 累积到约 32ms 再画一帧，慢速上浮看不出差别 */
+    frameDebt = 32
 
     ink: RGB = { r: 28, g: 42, b: 34 }
     accent: RGB = { r: 194, g: 58, b: 43 }
@@ -194,6 +196,7 @@ const { class: className, skip = '' } = Astro.props
         })
       }
 
+      this.frameDebt = 32
       this.resume()
     }
 
@@ -219,7 +222,15 @@ const { class: className, skip = '' } = Astro.props
       const height = this.clientHeight
       if (!width || !height) return
 
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      const raw = window.devicePixelRatio || 1
+      const connection = (
+        navigator as Navigator & { connection?: { saveData?: boolean } }
+      ).connection
+      const cap =
+        connection?.saveData || (navigator.hardwareConcurrency || 8) <= 4
+          ? 1
+          : 1.25
+      const dpr = Math.min(raw, cap)
       this.canvas.width = Math.round(width * dpr)
       this.canvas.height = Math.round(height * dpr)
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -264,10 +275,15 @@ const { class: className, skip = '' } = Astro.props
       const { ctx, width, height, bubbles } = this
       if (!width || !height) return
 
+      this.frameDebt += delta
+      if (this.frameDebt < 32 && !this.ripples.length) return
+      const step = this.frameDebt
+      this.frameDebt = 0
+
       this.lastTime = time
       ctx.clearRect(0, 0, width, height)
 
-      const dt = delta / 1000
+      const dt = step / 1000
       const fadeBand = height * 0.14
 
       for (let i = 0; i < bubbles.length; i++) {

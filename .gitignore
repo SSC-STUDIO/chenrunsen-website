@@ -7,3 +7,8 @@ build.exit
 preview.log
 preview.exit
 site.html
+
+# Verification scratch: screenshots and one-off probes written while checking a
+# change.  Useful during the work, never part of a deploy.
+.tmp-*
+scripts/_*

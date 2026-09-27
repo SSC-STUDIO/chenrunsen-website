@@ -27,7 +27,7 @@
       alive: false,
       canvas: null,
       ctx: null,
-      dpr: Math.min(window.devicePixelRatio || 1, 2),
+      dpr: Math.min(window.devicePixelRatio || 1, 1.5),
       particles: [],
       raf: 0,
       parallaxRaf: 0,
@@ -59,6 +59,7 @@
       S.parallaxWaves?.style.removeProperty('translate')
       S.parallaxWaves = null
       S.running = false
+      releaseCanvas()
       S.particles = []
       S.canvas = null
       S.ctx = null
@@ -66,10 +67,25 @@
 
     /* ── 光标拖尾：灯色微粒，随指针起落 ─────────────────── */
     function resize() {
-      if (!S.canvas || !S.ctx) return
+      if (!S.canvas || !S.ctx || !S.canvas.classList.contains('is-live')) return
       S.canvas.width = window.innerWidth * S.dpr
       S.canvas.height = window.innerHeight * S.dpr
       S.ctx.setTransform(S.dpr, 0, 0, S.dpr, 0, 0)
+    }
+
+    function ensureLive() {
+      if (!S.canvas || S.canvas.classList.contains('is-live')) return
+      S.canvas.classList.add('is-live')
+      resize()
+    }
+
+    function releaseCanvas() {
+      if (!S.canvas) return
+      S.canvas.classList.remove('is-live')
+      if (S.canvas.width || S.canvas.height) {
+        S.canvas.width = 0
+        S.canvas.height = 0
+      }
     }
 
     function spawn(x, y, boost) {
@@ -99,6 +115,7 @@
       }
       if (!S.particles.length) {
         S.running = false
+        releaseCanvas()
         return
       }
       S.raf = requestAnimationFrame(tick)
@@ -127,6 +144,7 @@
       S.lastX = e.clientX
       S.lastY = e.clientY
       if (d < 6) return
+      ensureLive()
       var boost = Math.min(40, d)
       spawn(e.clientX, e.clientY, boost)
       if (boost > 24) spawn(e.clientX, e.clientY, boost * 0.6)
@@ -158,10 +176,12 @@
           var r = el.getBoundingClientRect()
           var dx = (e.clientX - (r.left + r.width / 2)) * 0.16
           var dy = (e.clientY - (r.top + r.height / 2)) * 0.16
+          el.classList.add('is-pulled')
           el.style.setProperty('--magnet-x', Math.max(-14, Math.min(14, dx)).toFixed(1) + 'px')
           el.style.setProperty('--magnet-y', Math.max(-10, Math.min(10, dy)).toFixed(1) + 'px')
         }
         function onLeave() {
+          el.classList.remove('is-pulled')
           el.style.removeProperty('--magnet-x')
           el.style.removeProperty('--magnet-y')
         }
@@ -233,7 +253,6 @@
       S.canvas = canvas
       S.ctx = canvas.getContext('2d')
 
-      resize()
       refreshLamp()
 
       on(window, 'resize', resize, { passive: true })

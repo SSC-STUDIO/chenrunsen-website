@@ -81,7 +81,7 @@ const glyph = KIND_GLYPH[kind] ?? '测'
       data-handscroll-parallax="9"
     >
       <span class="p-bench-play__glyph" aria-hidden="true">{glyph}</span>
-      <BenchmarkPlay client:load game={game} />
+      <BenchmarkPlay client:idle game={game} />
     </section>
     <p class="p-back" data-reveal>
       <a class="p-card__link p-card__link--ghost" href="/benchmarks"

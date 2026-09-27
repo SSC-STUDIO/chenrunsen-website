@@ -4,6 +4,8 @@
  *
  * 密、连、有张力的竖直 polyline：值噪声扭出缓慢的地形起伏，
  * 指针径向推开并按速度拖拽，近处描边发亮。远山只作极淡垫底。
+ * 远山垫色与山脚水渍不随时间变，画进离屏缓存；山脊折线每帧只取样一次。
+ * 无人摩挲且脊线已歇时降到半帧，显影前不空转。
  */
 const { class: className } = Astro.props
 ---
@@ -66,6 +68,18 @@ const { class: className } = Astro.props
     return 1 - Math.pow(1 - t, 3)
   }
 
+  /** 满幅装饰画布：省流 / 少核用 1x，宽屏把 2x 收到 1.35，避免整屏位图 */
+  function decorativeDpr(width: number): number {
+    const raw = window.devicePixelRatio || 1
+    const connection = (
+      navigator as Navigator & { connection?: { saveData?: boolean } }
+    ).connection
+    if (connection?.saveData || (navigator.hardwareConcurrency || 8) <= 4) {
+      return Math.min(raw, 1)
+    }
+    return Math.min(raw, width > 1100 ? 1.35 : 1.5)
+  }
+
   class InkRidges extends HTMLElement {
     canvas: HTMLCanvasElement
     ctx: CanvasRenderingContext2D
@@ -78,9 +92,16 @@ const { class: className } = Astro.props
 
     lines: Point[][] = []
     cols = 0
+    dpr = 1
     lastTime = 0
     ridgeDisp: Float32Array[] = []
     ridgeVel: Float32Array[] = []
+    /** 每层山脊本帧的 y，填充和描边共用，避免 fbm 算两遍 */
+    ridgeYCache: Float32Array[] = []
+    /** 不随时间变化的山脚水渍 */
+    wash: HTMLCanvasElement | null = null
+    /** 静止时隔帧绘制 */
+    drawHalf = false
 
     ink: RGB = { r: 28, g: 42, b: 34 }
     paper: RGB = { r: 244, g: 234, b: 216 }
@@ -244,7 +265,9 @@ const { class: className } = Astro.props
     }
 
     resume() {
-      if (this.stopFrame || this.reduced) return
+      if (this.stopFrame || this.reduced || this.paused) return
+      // 显影开始前线是透明的，不必空转
+      if (this.reveal <= 0 && !this.revealing) return
       this.stopFrame = onFrame((time) => this.paint(time))
     }
 
@@ -275,7 +298,7 @@ const { class: className } = Astro.props
 
       if (!width || !height) return
 
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      const dpr = (this.dpr = decorativeDpr(width))
 
       this.canvas.width = Math.round(width * dpr)
       this.canvas.height = Math.round(height * dpr)
@@ -288,8 +311,10 @@ const { class: className } = Astro.props
       this.cols = Math.ceil(width / STEP) + 2
       this.ridgeDisp = LAYERS.map(() => new Float32Array(this.cols))
       this.ridgeVel = LAYERS.map(() => new Float32Array(this.cols))
+      this.ridgeYCache = LAYERS.map(() => new Float32Array(this.cols))
 
       this.buildLines()
+      this.rebuildWash()
 
       if (!this.stopFrame) this.paint(performance.now())
     }
@@ -342,6 +367,7 @@ const { class: className } = Astro.props
       this.accent =
         hexToRgb(css.getPropertyValue('--color-accent')) ?? this.accent
       this.boost = this.contrasted ? 0.78 : 1
+      this.rebuildWash()
     }
 
     moved(point: Point, withCursor = true) {
@@ -440,6 +466,20 @@ const { class: className } = Astro.props
       }
     }
 
+    /** 脊线还在回弹时不能降帧，否则弹簧会冻住 */
+    ridgesLive() {
+      for (let li = 0; li < this.ridgeVel.length; li++) {
+        const vel = this.ridgeVel[li]
+        const disp = this.ridgeDisp[li]
+        if (!vel || !disp) continue
+        for (let col = 0; col < vel.length; col++) {
+          if (vel[col] > 0.08 || vel[col] < -0.08) return true
+          if (disp[col] > 0.35 || disp[col] < -0.35) return true
+        }
+      }
+      return false
+    }
+
     paintRidges(time: number, eased: number) {
       const { ctx, width, height, ink } = this
       const { r, g, b } = ink
@@ -449,7 +489,8 @@ const { class: className } = Astro.props
         const layer = LAYERS[li]
         const disp = this.ridgeDisp[li]
         const vel = this.ridgeVel[li]
-        if (!disp || !vel) continue
+        const cache = this.ridgeYCache[li]
+        if (!disp || !vel || !cache) continue
 
         if (!this.reduced) {
           for (let col = 0; col < this.cols; col++) {
@@ -461,14 +502,22 @@ const { class: className } = Astro.props
           }
         }
 
-        ctx.beginPath()
         for (let col = 0; col < this.cols; col++) {
           const x = Math.min(col * STEP, width)
-          const y = this.ridgeY(li, x, time) + disp[col] + rise
-          if (col === 0) ctx.moveTo(x, y)
-          else ctx.lineTo(x, y)
+          cache[col] = this.ridgeY(li, x, time) + disp[col] + rise
         }
 
+        const trace = () => {
+          ctx.beginPath()
+          for (let col = 0; col < this.cols; col++) {
+            const x = Math.min(col * STEP, width)
+            const y = cache[col]
+            if (col === 0) ctx.moveTo(x, y)
+            else ctx.lineTo(x, y)
+          }
+        }
+
+        trace()
         const fill = Math.min(layer.alpha * this.boost, 0.18) * eased
         ctx.lineTo(width, height)
         ctx.lineTo(0, height)
@@ -476,21 +525,25 @@ const { class: className } = Astro.props
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${fill})`
         ctx.fill()
 
-        ctx.beginPath()
-        for (let col = 0; col < this.cols; col++) {
-          const x = Math.min(col * STEP, width)
-          const y = this.ridgeY(li, x, time) + disp[col] + rise
-          if (col === 0) ctx.moveTo(x, y)
-          else ctx.lineTo(x, y)
-        }
+        trace()
         ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${Math.min(fill + 0.06, 0.2)})`
         ctx.lineWidth = layer.line
         ctx.stroke()
       }
     }
 
-    paintWash(eased: number) {
-      const { ctx, width, height, field, paper, ink } = this
+    /** 山脚水渍不吃时间，尺寸或墨色变了才重画 */
+    rebuildWash() {
+      const { width, height, field, paper, ink, dpr } = this
+      if (!width || !height || !field) return
+
+      const wash = document.createElement('canvas')
+      wash.width = Math.round(width * dpr)
+      wash.height = Math.round(height * dpr)
+      const ctx = wash.getContext('2d')
+      if (!ctx) return
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
       const base = height * 0.82
       const amp = height * 0.08
 
@@ -506,22 +559,30 @@ const { class: className } = Astro.props
 
       ctx.lineTo(width, height)
       ctx.closePath()
-      ctx.fillStyle = `rgba(${ink.r}, ${ink.g}, ${ink.b}, ${0.055 * this.boost * eased})`
+      ctx.fillStyle = `rgba(${ink.r}, ${ink.g}, ${ink.b}, ${0.055 * this.boost})`
       ctx.fill()
 
       const mist = ctx.createLinearGradient(0, height * 0.78, 0, height)
       mist.addColorStop(0, `rgba(${paper.r}, ${paper.g}, ${paper.b}, 0)`)
-      mist.addColorStop(
-        1,
-        `rgba(${paper.r}, ${paper.g}, ${paper.b}, ${0.28 * eased})`
-      )
+      mist.addColorStop(1, `rgba(${paper.r}, ${paper.g}, ${paper.b}, 0.28)`)
       ctx.fillStyle = mist
       ctx.fillRect(0, height * 0.78, width, height * 0.22)
+
+      this.wash = wash
     }
 
     paint(time: number) {
       const { ctx, width, height, mouse } = this
       if (!width || !height) return
+
+      const calm =
+        !this.hovering && this.reveal >= 1 && !this.ridgesLive()
+      if (calm) {
+        this.drawHalf = !this.drawHalf
+        if (this.drawHalf) return
+      } else {
+        this.drawHalf = false
+      }
 
       this.lastTime = time
       this.frame += 1
@@ -553,7 +614,12 @@ const { class: className } = Astro.props
 
       ctx.clearRect(0, 0, width, height)
       this.paintRidges(time, eased)
-      this.paintWash(eased)
+      if (this.wash && eased > 0) {
+        ctx.save()
+        ctx.globalAlpha = eased
+        ctx.drawImage(this.wash, 0, 0, width, height)
+        ctx.restore()
+      }
 
       const { r, g, b } = this.ink
       const accent = this.accent
@@ -673,7 +739,6 @@ const { class: className } = Astro.props
 
       content: '';
       pointer-events: none;
-      will-change: transform;
     }
 
     &.is-interactive::before {

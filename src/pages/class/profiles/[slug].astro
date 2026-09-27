@@ -36,7 +36,7 @@ const { slug = '' } = Astro.params
 
   <main class="p-page p-page--wide">
     <ClassMotion />
-    <ClassProfile client:load slug={slug} />
+    <ClassProfile client:idle slug={slug} />
   </main>
 
   <PageFoot current="/class" />

@@ -216,11 +216,7 @@ const consoleLines = [
 </header>
 
 <script>
-  import {
-    onFrame,
-    signalThemeFlip,
-    type Cleanup,
-  } from '../motion/core'
+  import { signalThemeFlip } from '../motion/core'
   import { isNavCurrent } from '../utils/nav-current'
 
   import { gsap } from 'gsap'
@@ -325,7 +321,8 @@ const consoleLines = [
     writeDelay: number
     canWrite: boolean
     isPaused: boolean
-    unframe: Cleanup | null = null
+    /** 打字机用定时器，不占每帧循环 */
+    typeTimer = 0
 
     /**
      * Constructor
@@ -562,16 +559,22 @@ const consoleLines = [
     }
 
     /**
-     * Intersect handler
+     * 顶栏打字：按字间隔定时，页眉在视口里也不占每帧。
      */
     startFrame() {
-      if (this.unframe) return
-      this.unframe = onFrame((time) => this.updateConsole(time))
+      if (this.typeTimer || this.isPaused || !this.canWrite || !this.console) return
+      const wait = this.writeDelay > 0 ? this.writeDelay : 16
+      this.typeTimer = window.setTimeout(() => {
+        this.typeTimer = 0
+        if (this.isPaused || !this.canWrite) return
+        this.updateConsole(performance.now())
+        this.startFrame()
+      }, wait)
     }
 
     stopFrame() {
-      this.unframe?.()
-      this.unframe = null
+      window.clearTimeout(this.typeTimer)
+      this.typeTimer = 0
     }
 
     onIntersect(e) {
@@ -588,6 +591,7 @@ const consoleLines = [
       this.canWrite = true
       this.el?.classList.add('is-ready')
       this.playQrReveal()
+      this.startFrame()
     }
 
     /**
@@ -648,6 +652,7 @@ const consoleLines = [
     subpageReady() {
       this.canWrite = true
       this.playQrReveal()
+      this.startFrame()
     }
 
     /**
@@ -771,13 +776,7 @@ const consoleLines = [
      * Update console
      */
     updateConsole(time) {
-      if (
-        !this.console ||
-        !this.canWrite ||
-        time - this.lastTypeTime < this.writeDelay
-      ) {
-        return
-      }
+      if (!this.console || !this.canWrite) return
 
       if (this.message === '') {
         this.message = this.getRandomMessage()

@@ -40,6 +40,91 @@ const ogUrl = Astro.url.pathname.replace(/\/$/, '') || '/'
   <head>
     <meta charset="utf-8" />
 
+    <!-- FOUC gate: first paint is blank paper, never unstyled markup -->
+    <style is:inline>
+      html {
+        background-color: #f4ead8;
+      }
+      html.theme-contrasted {
+        background-color: #0e1412;
+      }
+      html:not(.is-css-ready) body {
+        visibility: hidden;
+        opacity: 0;
+      }
+    </style>
+    <script is:inline>
+      (function () {
+        var root = document.documentElement
+        var done = false
+        var domReady = document.readyState !== 'loading'
+
+        function reveal() {
+          if (done) return
+          done = true
+          root.classList.add('is-css-ready')
+        }
+
+        function siteLinks() {
+          return Array.prototype.filter.call(
+            document.querySelectorAll('link[rel="stylesheet"]'),
+            function (link) {
+              return (link.getAttribute('href') || '').indexOf('/_astro/') !== -1
+            }
+          )
+        }
+
+        function allComplete(links) {
+          if (!links.length) return false
+          for (var i = 0; i < links.length; i++) {
+            try {
+              if (!links[i].sheet) return false
+            } catch (e) {
+              return false
+            }
+          }
+          return true
+        }
+
+        function tryReveal() {
+          if (!domReady) return
+          if (allComplete(siteLinks())) reveal()
+        }
+
+        function bind() {
+          var links = siteLinks()
+          for (var i = 0; i < links.length; i++) {
+            if (links[i].getAttribute('data-fouc-armed') === '1') continue
+            links[i].setAttribute('data-fouc-armed', '1')
+            links[i].addEventListener('load', tryReveal)
+            links[i].addEventListener('error', tryReveal)
+          }
+          tryReveal()
+        }
+
+        var mo = new MutationObserver(bind)
+        mo.observe(root, { childList: true, subtree: true })
+        bind()
+
+        document.addEventListener('DOMContentLoaded', function () {
+          domReady = true
+          bind()
+          try {
+            mo.disconnect()
+          } catch (e) {}
+        })
+
+        // Safety: never stay blank forever if CSS fails
+        setTimeout(reveal, 3500)
+      })()
+    </script>
+    <noscript>
+      <style>
+        /* No JS: keep content hidden so the unstyled shell never paints.
+           Next build's site CSS also lifts this gate once it applies. */
+      </style>
+    </noscript>
+
     <title>{title}</title>
 
     <meta name="description" content={description} />
@@ -113,6 +198,10 @@ const ogUrl = Astro.url.pathname.replace(/\/$/, '') || '/'
           for (var i = 0; i < metas.length; i++) {
             metas[i].setAttribute('content', color)
           }
+
+          try {
+            root.style.backgroundColor = color
+          } catch (e) {}
         }
 
         apply(document.documentElement)
@@ -159,6 +248,13 @@ const ogUrl = Astro.url.pathname.replace(/\/$/, '') || '/'
           if (nextWrap) nextWrap.classList.remove('is-preparing')
           // 换页先摘显影门，等新页 initInkReveal 再挂，避免旧门挡住新页兜底
           next.classList.remove('is-ink-ready')
+
+          // 字体样式表是非阻塞的；已激活则换页不要退回 media=print
+          var liveFonts = document.querySelector('link[data-site-fonts]')
+          var nextFonts = nextDoc.querySelector('link[data-site-fonts]')
+          if (liveFonts && nextFonts && liveFonts.media === 'all') {
+            nextFonts.media = 'all'
+          }
         })
 
         // 模块脚本失败时：内联超时撤掉开场锁，避免整页永远透明
@@ -219,10 +315,23 @@ const ogUrl = Astro.url.pathname.replace(/\/$/, '') || '/'
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!--
+      宋体走可变字重：200–900 每个汉字切片只下一份，不再按 200/400/700/900 各下一遍。
+      media=print 让这份样式表离开关键路径，先用系统宋体出字，到齐再换。
+    -->
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Noto+Serif+SC:wght@200;400;700;900&display=swap"
       rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Noto+Serif+SC:wght@200..900&display=swap"
+      media="print"
+      data-site-fonts
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Noto+Serif+SC:wght@200..900&display=swap"
+      />
+    </noscript>
 
     <meta property="og:locale" content="zh_CN" />
     <meta property="og:type" content="website" />
@@ -559,19 +668,52 @@ const ogUrl = Astro.url.pathname.replace(/\/$/, '') || '/'
 
       /**
        * Init lenis
+       *
+       * 只在平滑滚动进行时把 raf 挂上 GSAP ticker。
+       * 常驻监听会让 ticker 的自动休眠失效（监听数 ≥ 2），
+       * 页面静止时仍每帧空转。
        */
       initLenis() {
         if (prefersReducedMotion()) return
+        if (this.lenis) return
 
-        const lenis = new Lenis()
+        const lenis = new Lenis({ autoRaf: false })
 
         lenis.on('scroll', ScrollTrigger.update)
 
-        gsap.ticker.add((time) => {
+        let driving = false
+
+        const needsFrame = () => !lenis.isStopped && lenis.isScrolling === 'smooth'
+
+        const drive = (time: number) => {
           lenis.raf(time * 1000)
+          if (needsFrame()) return
+          gsap.ticker.remove(drive)
+          driving = false
+        }
+
+        const kick = () => {
+          if (driving || !needsFrame()) return
+          driving = true
+          // 优先于时间线渲染，滚动进度和补间落在同一帧
+          gsap.ticker.add(drive, false, true)
+        }
+
+        let kickQueued = false
+        lenis.on('virtual-scroll', () => {
+          if (kickQueued || driving) return
+          kickQueued = true
+          queueMicrotask(() => {
+            kickQueued = false
+            kick()
+          })
         })
 
-        gsap.ticker.lagSmoothing(0)
+        const scrollTo = lenis.scrollTo.bind(lenis)
+        lenis.scrollTo = (target, options) => {
+          scrollTo(target, options)
+          kick()
+        }
 
         window.lenis = lenis
         this.lenis = lenis
