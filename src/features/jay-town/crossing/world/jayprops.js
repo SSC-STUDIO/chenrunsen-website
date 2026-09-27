@@ -818,9 +818,12 @@ function makeGuitar(o = {}) {
 /**
  * 駅の掛時計 -- the platform clock, on its own post, stopped at 5:20.
  *
- * `CylinderGeometry`'s three material slots are [side, top, bottom] and the
- * cap's uvs run the circle across the whole texture, so one three-material
- * mesh gets a round face with no second platter behind it.
+ * The face is a `CircleGeometry` disc, not the cylinder's top cap.  The cap
+ * version was one mesh fewer and it came out **a quarter turn round**: a
+ * `CylinderGeometry` cap maps the texture from its own local x/z, so tilting
+ * the cylinder to face +z leaves the numeral 12 on the right-hand side.  A
+ * circle's uvs run +u = +x and +v = +y, which is the same frame the canvas is
+ * drawn in, so the face is upright by construction.
  */
 function makeStationClock(o = {}) {
   const m = mats();
@@ -830,16 +833,21 @@ function makeStationClock(o = {}) {
   g.add(cyl(0.05, 0.058, H, 8, m.dark, 0, H / 2, 0));
   g.add(cyl(0.12, 0.14, 0.1, 8, m.stone, 0, 0.05, 0));
   g.add(box(0.05, 0.05, 0.46, m.dark, 0, H - 0.02, 0.2));
-  const caseMesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.26, 0.26, 0.09, 20),
-    [m.lacquer, flat({ color: 0xffffff, map: clockFaceTex(o.station ?? '花海駅'), cache: false }), m.lacquer],
-  );
-  caseMesh.position.set(0, H - 0.28, 0.34);
+  const CY = H - 0.28;
+  const caseMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.09, 20), m.lacquer);
+  caseMesh.position.set(0, CY, 0.34);
   caseMesh.rotation.x = Math.PI / 2;
   g.add(caseMesh);
   hullOutline(caseMesh, { thickness: 0.0026 }).userData.isOutline = true;
+  const face = new THREE.Mesh(
+    new THREE.CircleGeometry(0.245, 24),
+    flat({ color: 0xffffff, map: clockFaceTex(o.station ?? '花海駅'), cache: false }),
+  );
+  face.position.set(0, CY, 0.387);
+  face.userData.noOutline = true;
+  g.add(face);
   const bezel = new THREE.Mesh(new THREE.TorusGeometry(0.262, 0.02, 6, 20), m.lacquer);
-  bezel.position.copy(caseMesh.position);
+  bezel.position.set(0, CY, 0.34);
   g.add(bezel);
   // a small plate under the clock, the station's name again from below
   const plate = plateMesh(0.44, 0.16, 0.03, m.dark,
@@ -1051,16 +1059,34 @@ export function buildJayProps(ctx) {
 
   /* ---- 樱花街口 (stop 0) ---- */
   {
-    // On the west footway, angled about 60 deg so it reads from the spawn
-    // rather than edge-on.  Nothing else on this kerb but two bicycles.
+    /* Both stand on the *west* footway, which is the only kerb at this stop
+     * that is both sunlit and inside the spawn's view cone: the east side is a
+     * shop frontage under a deep awning, and a white balloon bunch in that
+     * shade is a grey balloon bunch.  `dev-jay/stop-0-a.png` is the canvas that
+     * settled it -- the first pass put the balloons and the bicycle at
+     * x 4.15/4.30 and neither one is legible in it.
+     *
+     * The west kerb itself is only free in two places.  The ground scan (a
+     * vertical ray from 9 m and a second one at chest height, on a 0.75 m grid)
+     * gives x = -4.1 as: z 4.6 clear, **z 5.35-7.6 a building**, z 8.35-13.6
+     * clear but holding the two bicycles `index.js` already parks at z 8.4 and
+     * 12.2, then a building again from 14.35.  So the notice board takes
+     * z 10.5, between those two bicycles, and the balloons take the corner at
+     * z 4.5 -- which is the second of the two clear cells. */
     ctx.add(makeTourBoard({ x: -4.2, z: 10.5, y: g(-4.2, 10.5), ry: 1.02 }));
     ctx.collide(-4.75, 10.05, -3.65, 10.95, g(-4.2, 10.5) + 1.6);
-    // The balloons on the east kerb, in the crossing's own view cone.
-    ctx.add(makeBalloonBunch({ x: 4.15, z: 6.7, y: g(4.15, 6.7), ry: -0.3 }));
-    ctx.collide(3.95, 6.5, 4.35, 6.9, g(4.15, 6.7) + 0.6);
-    // The student's bicycle, parked along the frontage north of them.
-    ctx.add(makeStudentBike({ x: 4.3, z: 9.0, y: g(4.3, 9.0), ry: Math.PI / 2 - 0.06 }));
-    ctx.collide(4.0, 8.15, 4.6, 9.85, g(4.3, 9.0) + 1.05);
+    /* The balloons go on the *east* kerb, at the one column the ground scan
+     * calls completely empty: x = 4.1, z = 7.6 reads as `.` -- nothing above it
+     * at all, no awning, no wall at chest height -- where the rest of that
+     * frontage is shop under a deep eave.  It is also the closest clear ground
+     * to the spawn that is inside the opening frame.
+     *
+     * The west kerb was tried first and does not work: the two clear cells on
+     * it are z 4.6, which a small outbuilding at x ~ -3.5 stands directly in
+     * front of, and z 8.35-13.6, which `index.js` already parks two bicycles
+     * and this file's notice board in. */
+    ctx.add(makeBalloonBunch({ x: 4.2, z: 7.6, y: g(4.2, 7.6), ry: -0.3 }));
+    ctx.collide(3.9, 7.2, 4.5, 8.0, g(4.2, 7.6) + 0.6);
   }
 
   /* ---- 唱片小巷 (stop 1) ---- */
@@ -1086,7 +1112,7 @@ export function buildJayProps(ctx) {
     const gy = g(-30.2, 27.4);
     ctx.add(makeBench({ x: -30.2, z: 27.4, y: gy, ry: -0.35 }));
     ctx.collide(-31.0, 27.1, -29.4, 27.7, gy + 0.72);
-    ctx.add(makeGuitar({ x: -29.75, z: 27.05, y: gy, ry: -0.9 }));
+    ctx.add(makeGuitar({ x: -29.75, z: 27.05, y: g(-29.75, 27.05), ry: -0.9 }));
     ctx.collide(-30.05, 26.7, -29.45, 27.4, gy + 1.05);
   }
 
@@ -1094,7 +1120,13 @@ export function buildJayProps(ctx) {
   {
     // East platform, out along -x from the stop, clear of the canopy edge at
     // z ~ -1.3 and of the departure board at z -5.1.
-    ctx.add(makeStationClock({ x: 19.4, z: -3.0, y: g(19.4, -3.0), ry: -Math.PI / 2 + 0.3, station: '花海駅', year: '2008' }));
+    ctx.add(makeStationClock({
+      x: 19.4, z: -3.0, y: g(19.4, -3.0),
+      /* The face has to point back up the platform, which is +x: an unstaffed
+       * platform is walked from the footbridge end, and the first pass had it
+       * at -x, so `stop-3-a.png` is a black disc with a clock behind it. */
+      ry: Math.PI / 2 + 0.3, station: '花海駅', year: '2008',
+    }));
     ctx.collide(19.1, -3.3, 19.7, -2.7, g(19.4, -3.0) + 2.5);
     ctx.add(makePlatformBench({ x: 18.4, z: -5.0, y: g(18.4, -5.0), ry: Math.PI / 2 }));
     ctx.collide(18.1, -5.85, 18.7, -4.15, g(18.4, -5.0) + 0.72);
@@ -1108,5 +1140,11 @@ export function buildJayProps(ctx) {
     ctx.collide(4.5, -33.9, 5.3, -33.3, g(4.9, -33.6) + 0.5);
     ctx.add(makeTeaSet({ x: 6.1, z: -35.4, y: g(6.1, -35.4), ry: 0.85 }));
     ctx.collide(5.7, -35.8, 6.5, -35.0, g(6.1, -35.4) + 0.5);
+    /* The student's bicycle, which the first pass had at 樱花街口.  The west
+     * kerb there has no room for it -- see the note in that block -- and this
+     * is where the brief wanted a bicycle all along: 河堤上的自転車, propped on
+     * the service path with the river behind it and the rod in front. */
+    ctx.add(makeStudentBike({ x: 2.2, z: -34.6, y: g(2.2, -34.6), ry: 0.42 }));
+    ctx.collide(1.75, -35.45, 2.65, -33.75, g(2.2, -34.6) + 1.05);
   }
 }
