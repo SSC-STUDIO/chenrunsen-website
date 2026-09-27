@@ -127,6 +127,10 @@ const stops = [
                   <span class="town-nav__text"><b>{item.title}</b><small>{item.caption}</small></span>
                   <span class="town-nav__where">0{item.target + 1} {ZONE_LABELS[item.target]}</span>
                   {item.kind === 'video' && <span class="town-nav__badge" aria-hidden="true">▶</span>}
+                  {/* 原始文件名。用户特意叮嘱过「别搞错了」，而缩略图上的标题
+                    * 是我按画面内容起的 —— 命名这件事本身就可能出错。把原始名
+                    * 一并列出来，一眼就能核对哪件素材被放到了哪里。 */}
+                  <span class="town-nav__source">原始文件：{item.source}</span>
                 </button>
               </li>
             ))}
@@ -925,11 +929,12 @@ const stops = [
   .town-nav__item { position: relative; display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 10px; width: 100%; padding: 6px; border: 1px solid #dfe5dd; border-radius: 6px; background: #fffdf7; color: inherit; text-align: left; }
   .town-nav__item:hover, .town-nav__item:focus-visible { border-color: var(--pink); background: #fff7f5; }
   .town-nav__item.is-current { border-color: #255956; background: #eef4f1; }
-  .town-nav__thumb { width: 72px; height: 54px; object-fit: cover; border-radius: 3px; background: #e7e2d6; }
+  .town-nav__thumb { grid-row: span 2; width: 72px; height: 54px; object-fit: cover; border-radius: 3px; background: #e7e2d6; }
   .town-nav__text { display: grid; gap: 2px; min-width: 0; }
   .town-nav__text b { font: 600 13px/1.3 var(--serif); }
   .town-nav__text small { overflow: hidden; font: 11px/1.3 var(--sans); color: #6d7a72; white-space: nowrap; text-overflow: ellipsis; }
   .town-nav__where { font: 700 9px/1.3 var(--sans); color: #8b9a92; white-space: nowrap; }
+  .town-nav__source { grid-column: 2 / 4; overflow: hidden; font: 10px/1.3 var(--sans); color: #a09183; white-space: nowrap; text-overflow: ellipsis; }
   .town-nav__badge { position: absolute; left: 60px; top: 40px; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: #173c3ed9; color: #fff; font-size: 8px; }
 
   .song-drawer { position: absolute; z-index: 15; left: max(25px, env(safe-area-inset-left)); bottom: calc(max(28px, env(safe-area-inset-bottom)) + 68px); display: flex; flex-direction: column; width: min(420px, calc(100% - 50px)); max-height: min(645px, calc(100svh - 135px)); border: 1px solid #d8e0db; border-radius: 8px; background: #faf8f2f5; color: var(--ink); box-shadow: 0 16px 50px #142e3047; backdrop-filter: blur(16px); }

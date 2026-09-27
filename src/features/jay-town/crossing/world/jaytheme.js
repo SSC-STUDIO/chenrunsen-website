@@ -5,6 +5,7 @@ import { box, cyl } from '../core/util.js';
 import { hullOutline } from '../core/outline.js';
 import { shopBlade } from '../core/textures.js';
 import { makeNoticeBoard, makeCrates, makeSignPost } from './props.js';
+import { buildJayProps } from './jayprops.js';
 import { groundY } from './street.js';
 
 /* ------------------------------------------------------------------ *
@@ -299,4 +300,13 @@ export function buildJayTheme(ctx) {
     const y = yStreet(12.8) + 0.05;
     ctx.add(makeVinylDisc({ x: -3.4, z: 12.2, y, ry: 0.9 }));
   }
+
+  /* The second pass: fourteen more props, across all five stops.  They live in
+   * `jayprops.js` because this file had become a list of one-off builders and
+   * the theme is now big enough to want its own module -- and because the two
+   * halves have different jobs: what is above is the *signage* that names each
+   * stop, and what is in there is the furniture that says who lives in it.
+   * Placement there is on `ctx.groundAt`, which is only answerable after the
+   * footways and platforms are laid, so it stays a single call at the end. */
+  buildJayProps(ctx);
 }

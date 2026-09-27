@@ -1403,15 +1403,15 @@ export function birdSplitGeo(scale = 1, cutW = 0.026) {
  * pushed out far enough that the tips cross just behind the tail, which is the
  * shape a real one has and the reason a crow's silhouette is a wedge.
  *
- * ## And it moves a little
+ * ## And it moves
  *
- * Reported as "it just sits there motionless", which for a perched bird is
- * *nearly* right, but not quite: a perched crow shifts its weight, flicks its
- * tail and turns its head to look at things.  `tick` is a small idle loop --
- * yaw, a head lift, a tail flick -- driven from `buildSkyBirds` with a per-bird
- * phase so the four of them are not in lockstep.  It is a few degrees of
- * rotation, which is all it takes for the eye to stop reading a model as a
- * decal.
+ * The idle is deliberately *not* here.  A perched crow shifts its weight,
+ * flicks its tail, stretches one wing and hops along the wire, and all of that
+ * is scheduling -- when to do it, how long to hold it, how four birds avoid
+ * sharing a beat -- rather than shape.  It lives in `skybirds.js`, which owns
+ * the perch and has the per-bird clock; this function builds the body and
+ * hands back the three pieces the idle needs, the way `makeCat` hands back its
+ * head and tail.
  */
 export function makeCrow(o = {}) {
   const g = new THREE.Group();
@@ -1449,18 +1449,12 @@ export function makeCrow(o = {}) {
     g.add(leg);
   }
 
-  let t = 0;
-  /** Idle: shift, look about, flick the tail.  `phase` desynchronises a row. */
-  g.userData.tick = (dt, phase = 0) => {
-    t += dt;
-    const a = t * 0.62 + phase;
-    const look = t * 0.31 + phase * 1.7;
-    bodyMesh.rotation.y = Math.sin(look) * 0.24 + Math.sin(look * 0.37) * 0.13;
-    bodyMesh.rotation.z = Math.sin(a) * 0.035;
-    bodyMesh.position.y = Math.sin(a * 0.5) * 0.008;
-    // the tail lifts on the same beat the bird leans forward
-    wings.rotation.x = Math.sin(a * 0.5) * 0.05;
-  };
+  /* The pieces an idle needs to reach.  Named rather than left to the caller
+   * to find by index: the wings are a group of two, and the order they are
+   * added in is a detail of this function, not a contract with `skybirds.js`. */
+  g.userData.body = bodyMesh;
+  g.userData.wingL = wings.children[0];
+  g.userData.wingR = wings.children[1];
 
   g.position.set(o.x, o.y ?? 0, o.z);
   g.rotation.y = o.ry ?? 0;

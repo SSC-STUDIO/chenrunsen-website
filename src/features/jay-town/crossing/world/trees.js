@@ -8,14 +8,30 @@ import { buildFallenPatches } from './petals.js';
 /* ------------------------------------------------------------------ *
  * Cherry trees.
  *
- * Trunks and branches are merged into a single mesh; the canopy is three
- * instanced meshes, one per blossom tone, plus a thin spray of loose petal
- * cards.  Crowns are built as *clusters at branch tips* with deliberate
- * gaps between limbs -- not one solid pink ball -- so forks stay readable
- * and the silhouette reads as anime sakura rather than a painted sphere.
+ * Trunks and branches are merged into two meshes -- the wood, and the darker
+ * bark of the foot; the canopy is **one** instanced mesh carrying a per-instance
+ * colour; a thin spray of loose petal cards finishes it.  Crowns are built as
+ * *sleeves of clumps along the limbs*, with deliberate gaps between limbs --
+ * not one solid pink ball -- so forks stay readable and the silhouette reads as
+ * anime sakura rather than a painted sphere.
+ *
+ * Two numbers carry the look, and both were measured rather than guessed:
+ *
+ *  - **many small clumps instead of a few big ones.**  `IcosahedronGeometry(1, 1)`
+ *    is 80 triangles and, at a quarter of a metre across, is a *balloon*; the
+ *    same geometry at detail 0 is 20 triangles, so the same triangle budget buys
+ *    four times as many clumps at two thirds the size.  That -- not the tone and
+ *    not the number of branches -- is what turns "a dozen balls on a pole" into
+ *    blossom, and it is free: the vertices submitted per frame are unchanged,
+ *    because it is the same 20 triangles whichever way it is spent.  Coverage of
+ *    the crown goes from about a quarter of its surface to about half of it.
+ *  - **one instanced mesh instead of three tones.**  `chunkInstanced` splits
+ *    every cloud per 80 m cell, so three tone meshes were three draw calls *per
+ *    cell*: measured at the crossing, the blossom alone was 144 of the 193 draw
+ *    calls the cherries cost.  One mesh with `setColorAt` is a third of that, and
+ *    it lets a clump's shade follow its height in the crown and its depth inside
+ *    the mass continuously instead of snapping between three flat pinks.
  * ------------------------------------------------------------------ */
-
-const BLOB_TONES = [PAL.blossomLight, PAL.blossom, PAL.blossomDeep];
 
 /** Match scene.ts lite: coarse pointer or narrow viewport → thinner canopy. */
 function sakuraLite() {
@@ -23,20 +39,39 @@ function sakuraLite() {
   return window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 700;
 }
 
-/** Place a wood segment from `a` toward `b`. `geo` already tapers; scales set girth. */
-function woodSeg(parts, geo, a, b, rButt, rTip) {
+/* The blossom ramp, deep to pale: the same three palette pinks the three tone
+ * meshes used, but read as a ramp rather than as three buckets. */
+const BLOSSOM_DEEP = new THREE.Color(PAL.blossomDeep);
+const BLOSSOM_MID = new THREE.Color(PAL.blossom);
+const BLOSSOM_PALE = new THREE.Color(PAL.blossomLight);
+const BLOSSOM_WARM = new THREE.Color(PAL.blossomWarm);
+const _tone = new THREE.Color();
+
+/** Deep at the foot and inside the mass, pale on the lit tops and the rim. */
+function blossomTone(hi) {
+  const u = (hi < 0 ? 0 : hi > 1 ? 1 : hi) * 2;
+  return u < 1
+    ? _tone.copy(BLOSSOM_DEEP).lerp(BLOSSOM_MID, u)
+    : _tone.copy(BLOSSOM_MID).lerp(BLOSSOM_PALE, u - 1);
+}
+
+/**
+ * Place a wood segment from `a` toward `b`.  `geo` carries its own taper, and
+ * the scale is the girth at the **butt** -- which is the number recorded in
+ * `limbs_` and the one the blossom steps off, so the wood and the blossom can
+ * never disagree about how thick a branch is.
+ */
+function woodSeg(parts, geo, a, b, rButt) {
   const dir = new THREE.Vector3().subVectors(b, a);
   const len = dir.length();
   if (len < 1e-4) return;
   const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
   const q = new THREE.Quaternion().setFromUnitVectors(
     new THREE.Vector3(0, 1, 0), dir.normalize());
-  /* Non-uniform xz scale exaggerates the baked cylinder taper so forks thin
-   * visibly toward the tip instead of reading as even pipes. */
   parts.push({
     geometry: geo,
     matrix: new THREE.Matrix4().compose(
-      mid, q, new THREE.Vector3(rButt, len, Math.max(0.04, rTip))),
+      mid, q, new THREE.Vector3(rButt, len, rButt)),
   });
 }
 
@@ -45,16 +80,29 @@ function woodSeg(parts, geo, a, b, rButt, rTip) {
  */
 export function buildSakura(ctx, spots) {
   const woodParts = [];
-  const blobs = [[], [], []];
+  const rootParts = [];
+  const blobM = [];
+  const blobC = [];
   const loose = [];
   const carpets = [];
   const lite = sakuraLite();
   const dens = lite ? 0.55 : 1;
 
-  const trunkGeo = new THREE.CylinderGeometry(0.72, 1.0, 1, 7, 1);
-  const branchGeo = new THREE.CylinderGeometry(0.22, 0.55, 1, 5, 1);
-  const twigGeo = new THREE.CylinderGeometry(0.1, 0.28, 1, 4, 1);
-  const tipGeo = new THREE.CylinderGeometry(0.06, 0.16, 1, 4, 1);
+  /* Four levels of wood, and every one of them carries its own taper in the
+   * geometry (butt -> tip radius) so the girth a call passes is the butt.  That
+   * is what makes the hierarchy legible: the trunk is 0.55 of itself at the top,
+   * a limb 0.42, and the radii below are derived from `trunkR` rather than
+   * picked, so a fork is *by construction* thinner than the thing it grows from.
+   * The old four geometries were all about the same thickness at the fork --
+   * 0.14·S limbs off a 0.14·S trunk top -- which is why the tree read as one
+   * pipe that happened to split instead of as a trunk with branches. */
+  const trunkGeo = new THREE.CylinderGeometry(0.55, 1.0, 1, 7, 1);
+  const limbGeo = new THREE.CylinderGeometry(0.42, 1.0, 1, 5, 1);
+  const twigGeo = new THREE.CylinderGeometry(0.5, 1.0, 1, 4, 1);
+  const tipGeo = new THREE.CylinderGeometry(0.5, 1.0, 1, 4, 1);
+  /* A buttress is a fin, not a pipe: thick where it leaves the trunk, dying into
+   * the ground.  Five-sided and 20 triangles, so a handful per tree is free. */
+  const ribGeo = new THREE.CylinderGeometry(0.26, 1.0, 1, 5, 1);
 
   let carpetBudget = lite ? 3 : 6;
 
@@ -68,33 +116,54 @@ export function buildSakura(ctx, spots) {
     const leanDir = spot.leanDir ?? rng.range(0, Math.PI * 2);
 
     const trunkH = 2.55 * S * rng.range(0.9, 1.12);
-    const trunkR = 0.2 * S;
-    woodParts.push({
-      geometry: trunkGeo,
-      matrix: trs(x, y + trunkH / 2, z, lean * Math.sin(leanDir), 0, -lean * Math.cos(leanDir),
-        trunkR, trunkH, trunkR),
-    });
-    // root flare
-    woodParts.push({
-      geometry: trunkGeo,
-      matrix: trs(x, y + 0.16 * S, z, 0, 0, 0, trunkR * 1.55, 0.34 * S, trunkR * 1.55),
-    });
+    const trunkR = 0.19 * S;
+    const limbR = trunkR * 0.36;
+    const twigR = limbR * 0.5;
+    const tipR = twigR * 0.4;
 
-    /* Where the trunk actually ends.
+    /* The stem is placed by its **foot**, along its own leaning axis rather than
+     * about its own centre.  `trs` rotates about the centre, so a centred trunk
+     * at this lean walks its base 0.17 m off the spot it is standing on and
+     * leaves the root flare behind -- the same arithmetic `buildCedar` spells
+     * out.  Placing from the foot puts the trunk, the flare, the collider and
+     * the point the limbs spring from all on one axis. */
+    const eul = new THREE.Euler(lean * Math.sin(leanDir), 0, -lean * Math.cos(leanDir));
+    const axis = new THREE.Vector3(0, 1, 0).applyEuler(eul);
+    const at = (h) => new THREE.Vector3(x, y, z).addScaledVector(axis, h);
+    const mid = at(trunkH / 2);
+    woodParts.push({
+      geometry: trunkGeo,
+      matrix: trs(mid.x, mid.y, mid.z, eul.x, 0, eul.z, trunkR, trunkH, trunkR),
+    });
+    const top = at(trunkH);
+
+    /* Root flare and buttresses, in the darker bark.  This is the colour band
+     * that says the tree is standing *in* the ground: without it the trunk meets
+     * the asphalt as one flat grey stick, and a cherry at the roadside in this
+     * world is nearly always seen with its foot in frame. */
+    rootParts.push({
+      geometry: trunkGeo,
+      matrix: trs(x, y + 0.15 * S, z, 0, 0, 0, trunkR * 1.8, 0.34 * S, trunkR * 1.8),
+    });
+    const ribs = 3 + Math.floor(rng.next() * 2);
+    for (let i = 0; i < ribs; i++) {
+      const a = (i / ribs) * Math.PI * 2 + rng.range(-0.35, 0.35);
+      const d = trunkR * rng.range(2.3, 3.4);
+      woodSeg(rootParts, ribGeo,
+        new THREE.Vector3(x, y + trunkR * rng.range(0.8, 1.4), z),
+        new THREE.Vector3(x + Math.cos(a) * d, y - 0.06, z + Math.sin(a) * d),
+        trunkR * 0.42);
+    }
+
+    /* Branch scaffold, in two tiers.
      *
-     * The trunk is a cylinder rotated about its own *centre* by the Euler
-     * (lean·sin d, 0, -lean·cos d) above, so its tip is the centre plus that
-     * rotation applied to (0, trunkH/2, 0).  Applied exactly rather than
-     * approximated, so it stays right if anything ever leans hard. */
-    const tip = new THREE.Vector3(0, trunkH / 2, 0)
-      .applyEuler(new THREE.Euler(lean * Math.sin(leanDir), 0, -lean * Math.cos(leanDir)));
-    const top = new THREE.Vector3(x + tip.x, y + trunkH / 2 + tip.y, z + tip.z);
-
-    /* Branch scaffold: 4–6 main limbs, each with a fork and often a twig, so
-     * the wood silhouette stays readable through the blossom.  Canopy anchors
-     * live only at tips (and a few mid-forks), which leaves gaps between
-     * limb clusters instead of filling a sphere. */
-    const limbs = 4 + Math.floor(rng.next() * 3);
+     * One whorl of limbs at the top of a bare pole is a palm, and that is what
+     * the cherry was: the whole crown hung off a single point, so there was
+     * nothing to read as a fork and nothing above the trunk to carry blossom.
+     * 2-3 upper limbs leave the stem at 0.55-0.78 of its height and lean up into
+     * the middle of the crown; 4-6 outer limbs leave the top and go **out** --
+     * wider than tall, which is the shape a 染井吉野 actually has, and it is the
+     * outer ones whose tips the blossom sleeves. */
     const canopyCenters = [];
     /* Every wood segment this tree actually draws, as [a, b, radius].  Kept so
      * the blossom can be hung *on* the branch rather than near where one ends;
@@ -104,20 +173,37 @@ export function buildSakura(ctx, spots) {
       canopyCenters.push({ p: p.clone(), w: weight });
     };
 
-    for (let i = 0; i < limbs; i++) {
-      const a = (i / limbs) * Math.PI * 2 + rng.range(-0.45, 0.45);
+    const upper = 2 + Math.floor(rng.next() * 2);
+    for (let i = 0; i < upper; i++) {
+      const a = (i / upper) * Math.PI * 2 + rng.range(-0.6, 0.6) + 0.7;
+      const from = at(trunkH * rng.range(0.55, 0.78));
+      const len = 1.45 * S * rng.range(0.7, 1.15);
+      const tilt = rng.range(0.42, 0.78);
+      const end = new THREE.Vector3(
+        from.x + Math.cos(a) * Math.sin(tilt) * len,
+        from.y + Math.cos(tilt) * len,
+        from.z + Math.sin(a) * Math.sin(tilt) * len
+      );
+      woodSeg(woodParts, limbGeo, from, end, limbR * 0.8);
+      limbs_.push([from, end, limbR * 0.8]);
+      pushTip(end, 0.85);
+    }
+
+    const limbCount = 4 + Math.floor(rng.next() * 3);
+    for (let i = 0; i < limbCount; i++) {
+      const a = (i / limbCount) * Math.PI * 2 + rng.range(-0.45, 0.45);
       const len = 1.95 * S * rng.range(0.72, 1.28);
-      /* Flatter tilt + uneven lengths open sky pockets between limbs so the
-       * crown is a ring of tip clusters, not a filled sphere. */
-      const tilt = rng.range(0.62, 1.05);
+      /* Flatter tilt than it was, and uneven lengths: 0.72-1.12 rather than
+       * 0.62-1.05 opens the crown *outward*, which is most of the difference
+       * between a cherry's silhouette and a young oak's. */
+      const tilt = rng.range(0.72, 1.12);
       const end = new THREE.Vector3(
         top.x + Math.cos(a) * Math.sin(tilt) * len,
         top.y + Math.cos(tilt) * len,
         top.z + Math.sin(a) * Math.sin(tilt) * len
       );
-      const limbR0 = 0.14 * S * rng.range(0.9, 1.1);
-      woodSeg(woodParts, branchGeo, top, end, limbR0, limbR0 * 0.55);
-      limbs_.push([top, end, limbR0]);
+      woodSeg(woodParts, limbGeo, top, end, limbR);
+      limbs_.push([top, end, limbR]);
       pushTip(end, 1.15);
 
       // primary fork (~every limb)
@@ -126,22 +212,27 @@ export function buildSakura(ctx, spots) {
         const dir2 = dir.clone()
           .add(new THREE.Vector3(rng.range(-0.85, 0.85), rng.range(0.05, 0.55), rng.range(-0.85, 0.85)))
           .normalize();
-        const l2 = len * rng.range(0.42, 0.72);
+        /* Longer than they were (0.5-0.85 of the limb, not 0.42-0.72): the outer
+         * twigs are what carry the crown's ragged edge, and a twig that stops
+         * inside the blossom has nothing to say. */
+        const l2 = len * rng.range(0.5, 0.85);
         const e2 = end.clone().addScaledVector(dir2, l2);
-        woodSeg(woodParts, twigGeo, end, e2, limbR0 * 0.5, limbR0 * 0.28);
-        limbs_.push([end, e2, limbR0 * 0.5]);
+        // ... and they droop, because the end of a limb is carrying blossom
+        e2.y -= l2 * rng.range(0.04, 0.16);
+        woodSeg(woodParts, twigGeo, end, e2, twigR);
+        limbs_.push([end, e2, twigR]);
         pushTip(e2, 1.0);
 
-        // tertiary tip twig — keeps wood visible through the blossom
-        if (rng.next() < 0.7) {
+        // tertiary tip twig — thin, long, and meant to be seen *through* the pink
+        if (rng.next() < 0.72) {
           const dir3 = dir2.clone()
-            .add(new THREE.Vector3(rng.range(-0.9, 0.9), rng.range(-0.15, 0.45), rng.range(-0.9, 0.9)))
+            .add(new THREE.Vector3(rng.range(-0.9, 0.9), rng.range(-0.3, 0.4), rng.range(-0.9, 0.9)))
             .normalize();
-          const l3 = l2 * rng.range(0.4, 0.7);
+          const l3 = l2 * rng.range(0.5, 0.8);
           const e3 = e2.clone().addScaledVector(dir3, l3);
-          woodSeg(woodParts, tipGeo, e2, e3, limbR0 * 0.26, limbR0 * 0.12);
-          limbs_.push([e2, e3, limbR0 * 0.26]);
-          pushTip(e3, 0.85);
+          woodSeg(woodParts, tipGeo, e2, e3, tipR);
+          limbs_.push([e2, e3, tipR]);
+          pushTip(e3, 0.9);
         }
       }
 
@@ -153,40 +244,45 @@ export function buildSakura(ctx, spots) {
         ).normalize();
         const lSide = len * rng.range(0.32, 0.55);
         const eSide = midPt.clone().addScaledVector(side, lSide);
-        woodSeg(woodParts, twigGeo, midPt, eSide, limbR0 * 0.42, limbR0 * 0.2);
-        limbs_.push([midPt, eSide, limbR0 * 0.42]);
+        woodSeg(woodParts, twigGeo, midPt, eSide, twigR * 0.8);
+        limbs_.push([midPt, eSide, twigR * 0.8]);
         pushTip(eSide, 0.75);
       }
     }
 
     /* Blossom, hung ON the branches.
      *
-     * **This is the fix for the clumps that float with no wood under them.**
+     * **This is the fix for the clumps that float with no wood under them**, and
+     * the rule it establishes is the one thing here that must not be inverted:
+     * the wood comes first.  Every segment `woodSeg` draws is recorded in
+     * `limbs_` as [a, b, radius], and blossom is placed **along** those
+     * segments -- walk a little way down one, step off its axis by about its own
+     * girth, and hang a clump there.  The version before that scattered clumps in
+     * a box of +-0.42..0.68 m around whichever tip the weighted picker chose; a
+     * limb tip's neighbour is two to four metres away, so two clumps in three
+     * touched neither the branch they were anchored to nor anything else.  No
+     * amount of tuning a count or a radius fixes a placement rule that does not
+     * reference the wood.
      *
-     * What was here scattered `52 + rng*18` clumps uniformly in a box of
-     * +-0.42..0.68 m around whichever limb tip the weighted picker chose, with
-     * radii of 0.12..0.30 m.  Two numbers make that impossible: a limb tip's
-     * *neighbour* is two to four metres away, and the clump's own offset from
-     * its anchor was up to twice its radius.  So a clump touched neither the
-     * branch it was nominally anchored to nor anything else -- it was placed in
-     * the air beside the tree by construction, and roughly two clumps in three
-     * landed that way.  No amount of tuning the count or the radius fixes a
-     * placement rule that does not reference the wood.
+     * What is new since is only the *shape* of the sleeve, and three things do
+     * it:
      *
-     * So the wood comes first now.  Every segment `woodSeg` draws is recorded
-     * in `limbs_` as [a, b, radius], and blossom is placed **along** them:
-     * pick a segment, walk a little way down it, step off the axis by about the
-     * limb's own radius, and put a clump there.  Every clump is then within a
-     * few tens of centimetres of real wood, which is what a cherry actually
-     * looks like -- blossom in a sleeve around the branch, densest at the tips.
+     *  - **the clumps are small and there are four times as many of them.**  A
+     *    quarter-metre blob is a balloon whatever colour it is; at 0.10 m and
+     *    half again the count the same mass reads as blossom.  See the header for
+     *    why that is free.
+     *  - **they sit up and out of the branch.**  A clump is stepped off the axis
+     *    on the side that faces the light, which is where a cherry actually
+     *    carries its flowers, and it leaves the underside of the limb bare -- so
+     *    the wood reads from below and the crown does not become a tube.
+     *  - **the interior is filled with the big dark ones.**  A crown is not a
+     *    shell: behind the lit rim there is a metre of blossom in its own shade.
+     *    Eight per cent of the budget, pushed down the ramp, is what gives the
+     *    mass a middle instead of a hole.
      *
-     * Two things fall out of doing it this way and both are wanted:
-     *
-     *  - the mass follows the branch structure, so the tree stops reading as a
-     *    ring of separate balls and starts reading as *this* tree's crown;
-     *  - `t` is biased toward the far end of each segment, so the tips are
-     *    heaviest and the crown thins back toward the trunk. */
-    const baseCount = Math.round((86 + Math.floor(rng.next() * 22)) * dens);
+     * The one number that is *not* per-tree is the step: blossom is placed every
+     * 0.13 m of branch, so a long limb carries more of it than a twig does, and
+     * the tips, which carry the most twigs per metre, come out heaviest. */
 
     let yMin = Infinity, yMax = -Infinity;
     for (const seg of limbs_) {
@@ -196,7 +292,7 @@ export function buildSakura(ctx, spots) {
     yMax = Math.max(yMax, yMin + 0.5);
     const ySpan = yMax - yMin;
 
-    /** Weighted pick of a canopy anchor, kept for the rim flecks below. */
+    /** Weighted pick of a canopy anchor, for the fluff that is not on wood. */
     const pickCenter = () => {
       let t = rng.next() * canopyCenters.reduce((s, c) => s + c.w, 0);
       for (const c of canopyCenters) {
@@ -206,76 +302,176 @@ export function buildSakura(ctx, spots) {
       return canopyCenters[canopyCenters.length - 1].p;
     };
 
-    const addBlob = (px, py, pz, r) => {
-      const roll = rng.next();
-      const hi = (py - yMin) / ySpan;
-      /* Sunlit tops and the lid; deep pink on the undersides and the shaded
-       * inner mass; mid everywhere else, which is most of it.  A per-tree
-       * `tone` still overrides the lot, which is how a whole tree is pinned to
-       * one shade. */
-      const tone = spot.tone !== undefined ? spot.tone
-        : hi > 0.6 ? 0
-          : (hi < 0.26 || roll < 0.22) ? 2
-            : 1;
-      blobs[tone].push(trs(
+    const _p = new THREE.Vector3();
+    const _n = new THREE.Vector3();
+
+    /* A per-tree `tone` pins the whole crown to one part of the ramp.  Nothing in
+     * the world sets it today; it is kept because it is how a district would ask
+     * for a darker or a paler avenue. */
+    const toneBias = spot.tone === undefined ? 0 : (1 - spot.tone) * 0.45;
+
+    /**
+     * One clump.  `hi` shifts it along the ramp: 0 is the foot of the crown and
+     * the middle of the mass, 1 is the sunlit lid.
+     */
+    const addBlob = (px, py, pz, r, hi) => {
+      blobM.push(trs(
         px, py, pz,
         rng.range(0, 3), rng.range(0, 3), rng.range(0, 3),
-        r * rng.range(0.9, 1.18),
-        r * rng.range(0.56, 0.82),
-        r * rng.range(0.9, 1.16),
+        /* Mildly flattened rather than squashed.  Rotated at random, a strongly
+         * anisotropic clump is a *plate*, and a crown of randomly-angled plates
+         * reads as broken glass -- which is what the first pass at twenty
+         * triangles looked like.  A tenth of a metre off round is enough to stop
+         * them being spheres without turning them into shards. */
+        r * rng.range(0.9, 1.14),
+        r * rng.range(0.72, 0.94),
+        r * rng.range(0.9, 1.12),
       ));
+      /* Height picks the band, the jitter breaks the band up, and the warm shift
+       * on about a quarter of them keeps the mass from reading as one sheet of
+       * plastic.  Both are deliberately small: the first pass at this jittered
+       * +-0.16 and shifted a quarter of the clumps warm, and the crown came out
+       * as gravel -- a hundred clumps each a slightly different pink reads as a
+       * hundred objects, not as one tree.  The gradient over the crown is what
+       * shapes it; the noise only has to break the banding. */
+      const c = blossomTone(toneBias + hi + (py - yMin) / ySpan * 0.55 + rng.range(-0.07, 0.07));
+      if (rng.next() < 0.15) c.lerp(BLOSSOM_WARM, 0.3);
+      blobC.push(c.r, c.g, c.b);
     };
 
-    for (let i = 0; i < baseCount; i++) {
-      const seg = limbs_[Math.floor(rng.next() * limbs_.length) % limbs_.length];
-      const [a, b, segR] = seg;
-      // walk down the segment, biased to the outer half where blossom sits
-      const t = 0.18 + Math.sqrt(rng.next()) * 0.82;
-      const along = a.clone().lerp(b, t);
+    /* ~600 clumps at 20 triangles is a little under the 10 000 triangles the old
+     * 128 balloons cost at 80 -- spent on clumps small enough not to be read
+     * individually, which is the whole difference. */
+    const budget = Math.round((510 + Math.floor(rng.next() * 100)) * dens);
 
-      /* Step off the axis.  `segR` is the limb's own girth at its butt and the
-       * offset is a couple of times that, which keeps the clump's centre just
-       * clear of the wood while its radius still swallows it -- so the branch
-       * enters the blossom rather than being buried in it or missing it. */
-      const off = (segR * 1.4 + 0.05) * S;
-      const th = rng.range(0, Math.PI * 2);
-      const ph = Math.acos(rng.range(-1, 1));
-      const r = 0.165 * S * rng.range(0.7, 1.35);
+    /* Length-weighted, so every metre of branch gets the same blossom.  Built
+     * once per tree rather than per clump: `limbs_` is up to twenty segments and
+     * the picker runs four hundred times. */
+    const segLen = limbs_.map(([a, b]) => a.distanceTo(b));
+    const totalLen = segLen.reduce((s, v) => s + v, 0) || 1;
+    const pickSeg = () => {
+      let t = rng.next() * totalLen;
+      for (let k = 0; k < segLen.length; k++) {
+        t -= segLen[k];
+        if (t <= 0) return k;
+      }
+      return segLen.length - 1;
+    };
+
+    /* A frame and a phase per segment, and this is the difference between a
+     * sleeve and a lace.
+     *
+     * The clumps spiral round the branch from that phase instead of each landing
+     * on whichever side of the wood the RNG picked.  Scattered to random sides,
+     * two neighbouring clumps are a whole diameter apart and the branch comes out
+     * as a dotted line with sky behind it -- which is what the first pass at this
+     * looked like.  A cherry carries its flowers on short spurs all round the
+     * wood, densest on top, and a spiral is that: continuous along the branch,
+     * and still uneven enough that the surface never reads as a pipe. */
+    const segU = [];
+    const segV = [];
+    const segPhase = [];
+    const segTwist = [];
+    for (const [a, b] of limbs_) {
+      const d = new THREE.Vector3().subVectors(b, a).normalize();
+      const h = Math.abs(d.y) > 0.9
+        ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+      const u = new THREE.Vector3().crossVectors(d, h).normalize();
+      segU.push(u);
+      segV.push(new THREE.Vector3().crossVectors(d, u).normalize());
+      segPhase.push(rng.range(0, Math.PI * 2));
+      /* The twist rate is per *segment*, not per clump.  Drawn per clump it is
+       * just another random angle and the sleeve falls apart again -- one clump
+       * at t and the next at t+0.01 end up on opposite sides of the branch. */
+      segTwist.push(rng.range(1.7, 2.9));
+    }
+
+    // the sleeve
+    const sleeveN = Math.round(budget * 0.56);
+    for (let i = 0; i < sleeveN; i++) {
+      const k = pickSeg();
+      const [a, b, segR] = limbs_[k];
+      // the first tenth of a limb is bare: blossom starts where the twigs do
+      const t = 0.1 + rng.next() * 0.9;
+      _p.lerpVectors(a, b, t);
+
+      const ang = segPhase[k] + t * segTwist[k];
+      _n.copy(segU[k]).multiplyScalar(Math.cos(ang))
+        .addScaledVector(segV[k], Math.sin(ang));
+      /* Biased up, so a limb is barer underneath than on top and the wood still
+       * reads from below. */
+      _n.y += 0.35;
+      _n.normalize();
+      /* **The number that decides whether the crown reads solid is this one.**
+       *
+       * Stepping off by 1.5x the limb's own girth puts every clump at 0.14 m from
+       * the wood, so each limb comes out as a pink tube about half a metre across
+       * with sky behind it -- and no number of clumps fixes that, because a shell
+       * one clump deep is transparent from every angle but the one you happen to
+       * be looking from.  What fills the space between two limbs is blossom that
+       * belongs to both, so the offset is drawn from a falloff: dense against the
+       * wood, thinning out to half a metre, which is deep enough that a view ray
+       * through the crown crosses several clumps.
+       *
+       * It is still *hung on the branch* -- the mean is a quarter of a metre from
+       * real wood, and a falloff like that is what a distribution of spur lengths
+       * looks like.  The bug this replaced put clumps two to four metres from the
+       * nearest anything. */
+      const off = segR * 1.5 + (0.04 + rng.next() ** 2 * 0.45) * S;
+      const r = 0.115 * S * rng.range(0.82, 1.25);
+      const jr = r * 0.7;
       addBlob(
-        along.x + off * Math.sin(ph) * Math.cos(th),
-        along.y + off * Math.cos(ph) - r * 0.18,
-        along.z + off * Math.sin(ph) * Math.sin(th),
-        r,
+        _p.x + _n.x * off + rng.range(-jr, jr),
+        _p.y + _n.y * off + rng.range(-jr, jr),
+        _p.z + _n.z * off + rng.range(-jr, jr),
+        r, 0,
       );
     }
 
-    /* A looser pass still walking out over the tips.  Blossom is heaviest at
-     * the very ends of a cherry, and this is what puts it there -- and being
-     * looser than the sleeve it also breaks the silhouette so the tree is not
-     * an even tube of pink. */
-    const fill = Math.round(26 * dens);
-    for (let i = 0; i < fill; i++) {
+    /* The tips, where a cherry is heaviest: a tight head of blossom at the end of
+     * every twig.  Tight rather than loose, because a tip is a flower head and
+     * not a puff of smoke -- and it is these that push the silhouette out past
+     * the last of the wood, so the outline is not the outline of the branches. */
+    const tipN = Math.round(budget * 0.16);
+    for (let i = 0; i < tipN; i++) {
       const c = pickCenter();
-      const r = 0.2 * S * rng.range(0.7, 1.3);
       addBlob(
-        c.x + rng.range(-0.3, 0.3) * S,
-        c.y + rng.range(-0.22, 0.34) * S,
-        c.z + rng.range(-0.3, 0.3) * S,
-        r,
+        c.x + rng.range(-0.26, 0.26) * S,
+        c.y + rng.range(-0.14, 0.26) * S,
+        c.z + rng.range(-0.26, 0.26) * S,
+        0.115 * S * rng.range(0.8, 1.25), 0.06,
       );
     }
 
-    /* The lit rim.  Small and pale, and only on the outer shell -- these are
-     * what stop the mass reading as one flat pink solid. */
-    const flecks = Math.round((14 + Math.floor(rng.next() * 8)) * dens);
-    for (let i = 0; i < flecks; i++) {
-      const c = pickCenter();
-      const r = 0.09 * S * rng.range(0.8, 1.2);
+    /* The inside.  These are the only clumps placed *in* the wood rather than
+     * around it, and they are deliberately no bigger than the sleeve: the first
+     * pass made them half a metre across on the theory that they would be hidden,
+     * and they were not -- a crown with holes in it shows its own core, and the
+     * core was a pile of shards.  Small, low, and on the inner half of a limb,
+     * where the wood around them is thickest. */
+    const innerN = Math.round(budget * 0.12);
+    for (let i = 0; i < innerN; i++) {
+      const [a, b] = limbs_[pickSeg()];
+      _p.lerpVectors(a, b, rng.range(0.1, 0.55));
       addBlob(
-        c.x + rng.range(-0.42, 0.42) * S,
-        c.y + rng.range(0.12, 0.5) * S,
-        c.z + rng.range(-0.42, 0.42) * S,
-        r,
+        _p.x + rng.range(-0.2, 0.2) * S,
+        _p.y - rng.range(0, 0.24) * S,
+        _p.z + rng.range(-0.2, 0.2) * S,
+        0.16 * S * rng.range(0.85, 1.2), -0.3,
+      );
+    }
+
+    /* The lit rim.  Small and pale and furthest out, on the shell only: at this
+     * size they are what softens the silhouette, and the pale end of the ramp
+     * is what stops the mass reading as one flat pink solid. */
+    const fleckN = budget - sleeveN - tipN - innerN;
+    for (let i = 0; i < fleckN; i++) {
+      const c = pickCenter();
+      addBlob(
+        c.x + rng.range(-0.66, 0.66) * S,
+        c.y + rng.range(0, 0.6) * S,
+        c.z + rng.range(-0.66, 0.66) * S,
+        0.062 * S * rng.range(0.8, 1.2), 0.3,
       );
     }
 
@@ -321,28 +517,48 @@ export function buildSakura(ctx, spots) {
   wood.name = 'sakuraWood';
   ctx.add(wood);
 
-  const blobGeo = new THREE.IcosahedronGeometry(1, 1);
+  /* Twenty triangles, and shaded *smooth*.
+   *
+   * The reason the canopy is finally clumps this small is arithmetic -- detail 0
+   * is a quarter of detail 1, so the same budget buys four times as many -- but
+   * the reason they do not read as gravel is the normals.  `PolyhedronGeometry`
+   * only asks for flat normals at detail 0, so this puts the sphere's own normals
+   * back: twenty triangles still draw a rougher *outline* than eighty, and at a
+   * tenth of a metre that is a scalloped edge, which is what blossom has.  What
+   * it stops is the interior reading as a cut gem. */
+  const blobGeo = new THREE.IcosahedronGeometry(1, 0);
+  blobGeo.normalizeNormals();
   const canopies = [];
-  // Blossom keeps a pink cast even in shade: a violet tint turns it grey, and
-  // a normal ramp makes the away-facing side of the canopy read as mauve rock,
-  // so the canopy gets a deliberately high-key two-band ramp.
-  const BLOB_TINT = [0xe2c3d2, 0xd8b2c6, 0xc99cba];
-  blobs.forEach((list, i) => {
-    if (!list.length) return;
+  if (blobM.length) {
+    /* One mesh, one material, colour per instance.  `color` is white and the
+     * whole tone lives in `instanceColor`, which is what lets a clump be shaded
+     * by where it sits rather than by which of three buckets it fell into.
+     *
+     * The tint is the middle of the three the old tone meshes used, and it stays
+     * deliberately pink for the reason it always was: blossom keeps a pink cast
+     * even in shade, a violet tint turns it grey, and a normal ramp makes the
+     * away-facing side of the canopy read as mauve rock -- so the canopy keeps a
+     * high-key two-band ramp. */
     const inst = new THREE.InstancedMesh(
       blobGeo,
-      cel({ color: BLOB_TONES[i], bands: 'soft', tint: BLOB_TINT[i] }),
-      list.length
+      cel({ color: 0xffffff, bands: 'soft', tint: 0xd8b2c6, flat: false }),
+      blobM.length
     );
-    list.forEach((m, k) => inst.setMatrixAt(k, m));
+    const c = new THREE.Color();
+    blobM.forEach((m, k) => {
+      inst.setMatrixAt(k, m);
+      c.setRGB(blobC[k * 3], blobC[k * 3 + 1], blobC[k * 3 + 2]);
+      inst.setColorAt(k, c);
+    });
+    inst.instanceColor.needsUpdate = true;
     inst.castShadow = true;
     /* Blossom does not *receive* shadow — see prior note: self-shadow zeroes
      * the high-key ramp and turns whole trees into grey lumps. */
     inst.receiveShadow = false;
-    inst.name = 'sakuraCanopy' + i;
+    inst.name = 'sakuraCanopy';
     ctx.add(inst);
     canopies.push(inst);
-  });
+  }
 
   if (loose.length) {
     const pGeo = new THREE.PlaneGeometry(1, 1);
@@ -368,7 +584,7 @@ export function buildSakura(ctx, spots) {
 
   if (carpets.length) buildFallenPatches(ctx, carpets);
 
-  [trunkGeo, branchGeo, twigGeo, tipGeo].forEach((g) => g.dispose());
+  [trunkGeo, limbGeo, twigGeo, tipGeo, ribGeo].forEach((g) => g.dispose());
   return { wood, canopies };
 }
 

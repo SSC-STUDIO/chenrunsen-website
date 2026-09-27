@@ -14,6 +14,10 @@ import { buildWorld } from './crossing/world/index.js'
 import { createEbike } from './crossing/world/ebike.js'
 import { screenRegistry, setScreenNight } from './crossing/world/jayscreen.js'
 import { ScreenHub, type ScreenInfo, type HubSong } from './screens/screen-hub'
+import { mediaIndex } from './crossing/world/jaymedia.js'
+
+/** 页面缩略图导航要用的一条素材记录。 */
+type MediaEntry = ReturnType<typeof mediaIndex>[number]
 
 type Options = {
   onReady?: () => void
@@ -43,9 +47,11 @@ export type TownSceneHandle = {
   screens: ScreenHub | null
   setSong(song: HubSong | null): void
   focusScreen(zone: number): void
+  /* 素材册。页面那层缩略图导航读的是同一份表，所以「场景里摆了哪些素材」
+   * 和「界面上能导航到哪些」永远是同一批 —— 这就是用户要的「表层导航」。 */
+  media(): MediaEntry[]
   dispose(): void
 }
-
 /**
  * Five themed stops mapped onto real places in Sakura Crossing
  * (flat authoring x/z, yaw in local surface frame).
@@ -100,7 +106,9 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     options.onError?.()
     return {
       goTo() {}, setNight() {}, setMove() {}, setPaused() {},
-      screens: null, setSong() {}, focusScreen() {}, dispose() {},
+      screens: null, setSong() {}, focusScreen() {},
+      media: () => [],
+      dispose() {},
     }
   }
 
@@ -162,7 +170,9 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
 
   try {
     sky = buildSky(scene, 500)
-    world = buildWorld(scene, options.onPhase)
+    /* `onGoto` 是绕回来的一环：世界建到一半时页面上那层缩略图导航还不存在，
+     * 但站牌上的命中盒要先绑好回调，所以这里传的是转发函数而不是具体实现。 */
+    world = buildWorld(scene, options.onPhase, { onGoto: (index: number) => goTo(index) })
     player = new Player(camera, canvas, world, { freeWalk: true, dragLook: true })
     player.pos.y = world.heightAt(player.pos.x, player.pos.z)
     player.applyCamera(0)
@@ -188,7 +198,9 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     options.onError?.()
     return {
       goTo() {}, setNight() {}, setMove() {}, setPaused() {},
-      screens: null, setSong() {}, focusScreen() {}, dispose() {},
+      screens: null, setSong() {}, focusScreen() {},
+      media: () => [],
+      dispose() {},
     }
   }
 
@@ -390,6 +402,9 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
         player.update(dt)
         ebike?.update(dt)
       }
+      /* 视频屏按距离决定播不播，而「距离」只有这里知道。暂停时也灌一次：
+       * 停在原地不动的时候，屏幕不该因为一次暂停就黑掉。 */
+      world.setPlayer(player.pos.x, player.pos.z)
       world.update(dt)
     }
 
@@ -512,7 +527,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   /* Dev handle.  The screens are the one part of this page whose correctness
    * cannot be read off the DOM, so the harness in `scripts/verify-jay-town.mjs`
    * needs a way in; it is inert in production. */
-  ;(window as unknown as { __jayTown?: unknown }).__jayTown = { scene, screens, player, world, camera, renderer, pipeline }
+  ;(window as unknown as { __jayTown?: unknown }).__jayTown = { scene, screens, player, world, camera, renderer, pipeline, media: mediaIndex }
   frame = requestAnimationFrame(tick)
 
   return {
@@ -521,6 +536,9 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     setSong(song) { screens.setSong(song) },
     focusScreen(zone) { screens.focus(zone) },
     setNight(value) { nightTarget = value ? 1 : 0 },
+    /* 素材册交给页面那一层渲染缩略图。表在 `media.ts`，这里只是转发，
+     * 免得页面去 import 一个 3D 目录里的模块。 */
+    media: mediaIndex,
     setMove(x, z) {
       // Page pad: z=-1 forward, x=+1 right → player fwd/side
       player.setExternalMove(clamp(x, -1, 1), clamp(-z, -1, 1))

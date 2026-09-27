@@ -60,6 +60,7 @@ import { buildDetails } from './details.js';
 import { buildSkyBirds } from './skybirds.js';
 import { buildJayTheme } from './jaytheme.js';
 import { buildJayScreens } from './jayscreen.js';
+import { buildJayMedia, setMediaPlayerPosition } from './jaymedia.js';
 import {
   makePole, makeWires, makeKeiTruck, makeBicycle, makeMirror, makePostBox,
   makeShrine, makeCat, makeCone, makeBarrier, makeGuardrail, makePlanter,
@@ -76,7 +77,7 @@ import {
  * left of centre with the shop stacked against it.
  * ------------------------------------------------------------------ */
 
-export function buildWorld(scene, onPhase) {
+export function buildWorld(scene, onPhase, { onGoto = null } = {}) {
   /* Build phases, reported outward so the page can say what it is waiting for.
    *
    * This function is synchronous and blocks for seconds -- several times
@@ -352,6 +353,10 @@ export function buildWorld(scene, onPhase) {
    * props do -- they hang on walls those districts built -- and before the
    * bake, which re-seats each `planetRigid` group onto the surface. */
   buildJayScreens(ctx);
+  /* 素材装置（画框、视频屏、站牌）最后进来：它们要挂在各区块已经砌好的墙上，
+   * 也要用 `ctx.groundAt` 拿到真实地面标高。`onGoto` 是页面上那条缩略图导航
+   * 反过来注入的 —— 站在牌子前点一下，走的是同一个 goTo。 */
+  buildJayMedia(ctx, { gotoStop: (zone) => onGoto?.(zone) });
   for (const d of districts) if (d.update) ctx.update(d.update);
   const extraSakura = districts.flatMap((d) => d.sakura ?? []);
   const extraShrubs = districts.flatMap((d) => d.shrubs ?? []);
@@ -836,6 +841,9 @@ export function buildWorld(scene, onPhase) {
       return h;
     },
     get sequenceState() { return seq.state; },
+    /* 玩家在哪。视频屏要按距离决定播不播，而 `Player` 是在 `buildWorld`
+     * 之后才 new 出来的，所以只能让外面每帧灌进来。 */
+    setPlayer(x, z) { setMediaPlayerPosition(x, z); },
     update(dt) {
       updateSequence(dt);
       train.update(dt);
