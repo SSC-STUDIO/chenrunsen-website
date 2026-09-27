@@ -51,25 +51,32 @@ const ROAD_Y = 0.135
 export const SCREENS: ScreenSpec[] = [
   /* 时代广场 -- the level crossing, seen from the kerb north of the barrier.
    * Ahead and to the right, on the corner shop's flank, clear of the boom. */
-  { zone: 0, name: '时代广场', x: 5.6, z: 4.2, yaw: 0, baseY: ROAD_Y, y: 3.0, w: 4.4, h: 2.475 },
+  { zone: 0, name: '时代广场', x: 5.6, z: 4.2, yaw: Math.PI, baseY: ROAD_Y, y: 3.0, w: 4.4, h: 2.475 },
 
-  /* 唱片行 -- the listening booth, in the shopping street's east row.  The
-   * stop looks down the middle of the street; measured `facing` says this
-   * turns by PI, not by -PI/2. */
-  { zone: 1, name: '唱片行', x: 25.2, z: 21.6, yaw: Math.PI, baseY: ROAD_Y, y: 1.45, w: 1.9, h: 1.069 },
+  /* 唱片行 -- the listening booth, in the shopping street's east row.  It
+   * projects, but off the right-hand edge: bring it round so it sits closer to
+   * the middle of the street the stop is looking down. */
+  { zone: 1, name: '唱片行', x: 21.8, z: 21.6, yaw: Math.PI, baseY: ROAD_Y, y: 1.45, w: 1.9, h: 1.069 },
 
   /* 天台 -- the gantry, off the precinct terrace's south edge.  Bigger and
    * higher than the rest, because it is meant to be watched from across the
    * terrace rather than walked up to.  Also turned by PI. */
   { zone: 2, name: '天台', x: -28.4, z: 23.4, yaw: Math.PI, baseY: 2.09, y: 2.9, w: 3.9, h: 2.194 },
 
-  /* 毕业那天 -- the departure board, on the platform the stop stands on.
-   * The stop looks west along the rails, so this faces back east at it. */
-  { zone: 3, name: '毕业那天', x: 13.6, z: -4.4, yaw: Math.PI, baseY: ROAD_Y, y: 2.35, w: 2.8, h: 1.575 },
+  /* 毕业那天 -- the departure board, down the platform and off to one side.
+   *
+   * **And `z: -8.6` rather than `-4.4` is the load-bearing part.**  Placed at
+   * -4.4 this sat almost exactly on the stop's view axis: the viewer looks due
+   * west along -x and the screen was at the same z, so the angle between the
+   * view direction and the screen's own plane was a couple of degrees and the
+   * measured rectangle came out 46 px wide against 328 tall.  A screen you walk
+   * straight at is a screen you see edge-on. Moving it four metres down the
+   * platform is what gives it a face to look at. */
+  { zone: 3, name: '毕业那天', x: 13.0, z: -8.6, yaw: Math.PI, baseY: ROAD_Y, y: 2.35, w: 2.8, h: 1.575 },
 
   /* 七里香河堤 -- hung over the canal's south bank, ahead of the stop along
    * the towpath.  The water side of the town is where the blossom belongs. */
-  { zone: 4, name: '七里香河堤', x: 5.6, z: -38.6, yaw: 0, baseY: ROAD_Y, y: 1.95, w: 3.2, h: 1.8 },
+  { zone: 4, name: '七里香河堤', x: 5.6, z: -38.6, yaw: Math.PI, baseY: ROAD_Y, y: 1.95, w: 3.2, h: 1.8 },
 ]
 
 export const SCREEN_BY_ZONE = (zone: number): ScreenSpec | undefined =>
