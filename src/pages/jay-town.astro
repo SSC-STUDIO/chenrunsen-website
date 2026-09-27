@@ -45,7 +45,14 @@ const stops = [
 
       <button class="ui-restore" id="ui-restore" type="button" hidden>显示界面</button>
 
-      <div class="scene-status" id="scene-status" role="status" aria-live="polite">小镇正在亮起…</div>
+      <div class="scene-status" id="scene-status" role="status" aria-live="polite">
+        <span class="scene-status__mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="scene-status__body">
+          <strong id="scene-phase">小镇正在亮起</strong>
+          <span id="scene-note">第一次打开会慢一些，之后会留在缓存里。</span>
+        </span>
+        <span class="scene-status__trail" id="scene-trail" aria-hidden="true"></span>
+      </div>
       <div class="scene-failure" id="scene-failure" hidden>
         <p>3D 场景暂时无法显示，歌单仍可查看。</p>
         <button class="scene-failure__action" id="failure-songs" type="button">打开歌单</button>
@@ -140,9 +147,15 @@ const stops = [
     </main>
 
     <script>
+      /* `songs` is small and the drawer's search needs it immediately, so it
+       * stays a static import.  The scene is the other 900 kB -- three.js and
+       * sixty world modules -- and it is deliberately *not*: see `buildScene`
+       * below, which pulls it in dynamically so the page and its loader paint
+       * before a byte of it has parsed. */
       import { songs } from '../features/jay-town/songs'
-      import { mountTownScene } from '../features/jay-town/scene'
+      import type { mountTownScene as MountTownScene } from '../features/jay-town/scene'
 
+      type Scene = ReturnType<typeof MountTownScene>
       type Song = (typeof songs)[number]
       const town = document.querySelector('#town') as HTMLElement
       const canvas = document.querySelector('#town-canvas') as HTMLCanvasElement
@@ -193,15 +206,57 @@ const stops = [
         })
       }
 
-      let scene: ReturnType<typeof mountTownScene> | null = null
-      try {
-        scene = mountTownScene(canvas, {
-          onReady() {
-            town.classList.add('scene-ready')
-            town.classList.remove('scene-error')
-            sceneStatus.hidden = true
-            sceneFailure.hidden = true
-          },
+      let scene: Scene | null = null
+
+      /* --------------------------- loading the world ---------------------------
+       *
+       * The world build is synchronous and blocks for seconds, and on a phone
+       * that is essentially the whole of the wait: there is no network left to
+       * wait for and nothing to stream, it is one long frozen task.  A spinner
+       * that never moves for thirty seconds is indistinguishable from a page
+       * that has hung -- which is exactly what was reported.
+       *
+       * There is no honest progress bar to be had, because nothing can repaint
+       * while the task runs: the first version of this tried to block inside
+       * the build callback until the browser had painted, which cannot work --
+       * it blocks the very paint it is waiting for.
+       *
+       * What does work is ordering.  The loader is already in the markup, so it
+       * is painted with the rest of the page; then this sits on a couple of
+       * animation frames so that paint is definitely *on screen* before the
+       * build starts.  The labels that arrive during the build are collected
+       * and shown on the failure panel if it never finishes, which is the one
+       * case where knowing how far it got is worth anything. */
+      const phaseEl = document.querySelector('#scene-phase') as HTMLElement
+      const noteEl = document.querySelector('#scene-note') as HTMLElement
+      const trailEl = document.querySelector('#scene-trail') as HTMLElement
+      const phases: string[] = []
+
+      const yieldFrame = () => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      })
+
+      function buildScene() {
+        try {
+          /* Dynamic on purpose.  A static import of this module puts three.js
+           * and sixty world modules in the page's own chunk, so the browser has
+           * to download and parse all of it before it can paint anything --
+           * which is why thirty seconds of nothing used to be possible.  Here
+           * the loader is already on screen by the time this runs. */
+          return import('../features/jay-town/scene').then(({ mountTownScene }) => {
+            scene = mountTownScene(canvas, {
+            onPhase(label: string) {
+              phases.push(label)
+              phaseEl.textContent = label
+              noteEl.textContent = `第 ${phases.length} 步，共 6 步`
+              trailEl.textContent = '●'.repeat(phases.length) + '○'.repeat(Math.max(0, 6 - phases.length))
+            },
+            onReady() {
+              town.classList.add('scene-ready')
+              town.classList.remove('scene-error')
+              sceneStatus.hidden = true
+              sceneFailure.hidden = true
+            },
           onError() {
             town.classList.add('scene-error')
             town.classList.remove('scene-ready')
@@ -209,13 +264,30 @@ const stops = [
             sceneFailure.hidden = false
           },
           onZoneChange: updateZone,
-        })
-      } catch (error) {
+            })
+          }).catch(failScene)
+        } catch (error) {
+          failScene(error)
+        }
+      }
+
+      function failScene(error: unknown) {
         console.error('Unable to start sakura town', error)
         town.classList.add('scene-error')
+        town.classList.remove('scene-ready')
         sceneStatus.hidden = true
         sceneFailure.hidden = false
+        /* The one case where knowing how far it got is worth anything. */
+        if (phases.length && !sceneFailure.querySelector('.scene-failure__where')) {
+          const where = document.createElement('p')
+          where.className = 'scene-failure__where'
+          where.textContent = `停在：${phases[phases.length - 1]}（第 ${phases.length} 步）`
+          sceneFailure.appendChild(where)
+        }
       }
+
+      /* Let the loader be seen before the main thread is taken away. */
+      void yieldFrame().then(buildScene)
 
       routeButtons.forEach((button) => button.addEventListener('click', () => {
         const index = Number(button.dataset.zone)
@@ -549,7 +621,56 @@ const stops = [
   .ui-restore { position: absolute; z-index: 30; right: max(20px, env(safe-area-inset-right)); top: max(20px, env(safe-area-inset-top)); padding: 9px 12px; border: 1px solid #f8f5ecb8; background: #173c3eaa; color: #fff; backdrop-filter: blur(8px); }
   .ui-hidden .town-header, .ui-hidden .town-route, .ui-hidden .place-stamp, .ui-hidden .player-bar, .ui-hidden .move-pad, .ui-hidden .song-drawer, .ui-hidden .video-panel, .ui-hidden .scene-status, .ui-hidden .scene-failure { display: none !important; }
 
-  .scene-status { position: absolute; z-index: 2; left: max(26px, env(safe-area-inset-left)); top: 178px; padding: 6px 9px; background: #f8f5ecdc; color: var(--ink); font-size: 11px; }
+  /* ----------------------------- loading state -----------------------------
+     The main thread is blocked for the whole world build, so *nothing* driven
+     by script can animate here.  Anything that has to keep moving while the
+     scene is being built must be a CSS animation, which the compositor keeps
+     running on its own thread -- hence the spinner being three plain spans and
+     a keyframe rather than anything the page updates. */
+  .scene-status {
+    position: absolute;
+    z-index: 3;
+    /* **Anchored to the top, not centred.**
+     *
+     * This was `top: 50%` with a `translate(-50%, -50%)`, and on a phone it
+     * landed off the left edge with its text under the header: a percentage
+     * `top` resolves against the containing block, and inside a `position:
+     * fixed` parent with a transformed child the box is not the viewport you
+     * think it is.  Anchoring from the top with `translateX` only removes every
+     * one of those dependencies. */
+    left: 50%;
+    top: max(112px, 14vh);
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    width: min(340px, calc(100vw - 32px));
+    max-width: calc(100vw - 32px);
+    padding: 15px 18px;
+    border: 1px solid #ffffff2e;
+    border-radius: 10px;
+    background: #16302ed9;
+    color: #f8f5ec;
+    box-shadow: 0 18px 54px #0b211f59;
+    backdrop-filter: blur(14px);
+  }
+  .scene-status__body { display: grid; gap: 4px; min-width: 0; }
+  .scene-status__body strong { font: 600 15px/1.35 var(--serif); letter-spacing: .01em; }
+  .scene-status__body span { color: #cfe0d8; font-size: 11px; line-height: 1.45; }
+  .scene-status__trail { position: absolute; left: 18px; bottom: 6px; color: #ed9caa; font-size: 6px; letter-spacing: 2px; }
+  /* Three petals on a short orbit, in the page's own blossom pink. */
+  .scene-status__mark { position: relative; flex: none; width: 30px; height: 30px; animation: town-spin 2.4s linear infinite; }
+  .scene-status__mark i {
+    position: absolute; width: 9px; height: 9px; border-radius: 50%;
+    background: #f0a9b4;
+  }
+  .scene-status__mark i:nth-child(1) { left: 10px; top: 0; }
+  .scene-status__mark i:nth-child(2) { left: 1.5px; bottom: 3px; opacity: .72; }
+  .scene-status__mark i:nth-child(3) { right: 1.5px; bottom: 3px; opacity: .45; }
+  @keyframes town-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .scene-status__mark { animation: none; } }
+  .scene-failure__where { margin: 7px 0 0; color: #6c8179; font-size: 11px; }
+
   .scene-failure { position: absolute; z-index: 3; left: max(26px, env(safe-area-inset-left)); top: 178px; max-width: 235px; padding: 12px 14px; background: #f8f5ecee; color: var(--ink); font-size: 12px; line-height: 1.6; }
   .scene-failure p { margin: 0 0 9px; }
   .scene-failure__action { padding: 4px 0; border: 0; border-bottom: 1px solid var(--pink-deep); background: none; color: var(--pink-deep); }
@@ -654,7 +775,12 @@ const stops = [
     .tool-button { width: 31px; font-size: 17px; }
     .hide-button { padding: 0 6px; font-size: 10px; }
     .town-shade { background: linear-gradient(180deg, #15363175 0%, transparent 34%, transparent 52%, #1536317a 100%); }
-    .scene-status, .scene-failure { top: 125px; left: 13px; }
+    /* The loader carries its own centring and must not be moved here; only the
+     * failure panel, which is anchored to the top-left corner, is repositioned
+     * for the narrow header.  This rule used to set `left: 13px` on both, which
+     * fought the loader's `translateX(-50%)` and pushed it off the left edge. */
+    .scene-status { top: max(104px, 13vh); }
+    .scene-failure { top: 125px; left: 13px; }
     .town-route { left: 9px; right: 9px; bottom: max(9px, env(safe-area-inset-bottom)); width: auto; min-width: 0; transform: none; }
     .town-route__stop { min-height: 58px; padding-top: 10px; gap: 5px; }
     .town-route__stop strong { font-size: 11px; }

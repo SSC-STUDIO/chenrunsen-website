@@ -76,7 +76,21 @@ import {
  * left of centre with the shop stacked against it.
  * ------------------------------------------------------------------ */
 
-export function buildWorld(scene) {
+export function buildWorld(scene, onPhase) {
+  /* Build phases, reported outward so the page can say what it is waiting for.
+   *
+   * This function is synchronous and blocks for seconds -- several times
+   * longer on a phone -- so a progress *bar* would be a lie: nothing can
+   * repaint while it runs.  What the page can honestly show is which phase it
+   * is on, and to make even that possible `onPhase` is allowed to *block*
+   * longer than this function would like: the page gives the browser a frame
+   * inside it, so the label it just set actually reaches the screen before the
+   * next phase starts.  A handful of dropped frames is a fair price for not
+   * staring at a frozen page.
+   *
+   * The names are things a visitor would recognise rather than function names. */
+  const say = (label) => { try { onPhase?.(label); } catch { /* a label must never break the build */ } };
+
   const root = new THREE.Group();
   root.name = 'world';
   scene.add(root);
@@ -138,6 +152,7 @@ export function buildWorld(scene) {
   };
 
   /* ------------------------------ base layers ------------------------------ */
+  say('铺开街道与铁道');
   const planet = buildPlanet(scene);
   buildStreet(ctx);
   const crossing = buildRailway(ctx);
@@ -145,6 +160,7 @@ export function buildWorld(scene) {
   const shop = buildShop(ctx);
 
   /* -------------------------------- houses -------------------------------- */
+  say('盖起沿街的房子');
   const houseDefs = [
     // Near side, left of the street.  These are held back deliberately: any
     // frontage closer than this walls off the sight line along the railway,
@@ -250,6 +266,7 @@ export function buildWorld(scene) {
    *
    * `buildDistrict` is last because it also dresses the housing above, and it
    * needs the same definitions the house generator was given. */
+  say('长出学校、商店街与河堤');
   const districts = [
     /* 裏山 first, because it is *ground*: the only module other than `street.js`
      * that produces a walkable surface rather than things standing on one.  The
@@ -329,6 +346,7 @@ export function buildWorld(scene) {
     buildTraffic(ctx),
     buildDetails(ctx),
   ];
+  say('种下樱花与树丛');
   buildJayTheme(ctx);
   /* The five screens run after every district for the same reason the theme
    * props do -- they hang on walls those districts built -- and before the
@@ -749,8 +767,14 @@ export function buildWorld(scene) {
   /* ------------------------- project onto the planet -------------------------
    * Runs last, once every builder has finished. Everything above this line is
    * still authored on a flat plane and has no idea the planet exists.       */
+  /* The two slowest steps by a distance: wrapping 20 000 geometries onto the
+   * sphere, then collapsing 20 500 meshes into 5 100.  They get their own
+   * labels because together they are most of the wait. */
+  say('把小镇卷成球面');
   const bakeStats = bakeToPlanet(root, { maxEdge: 4.0 });
   train.planetize();
+
+  say('合并静态物体');
 
   /* Static batching depends on what the bake just established -- root-space
    * geometry under identity transforms -- so it can only run here, and it has

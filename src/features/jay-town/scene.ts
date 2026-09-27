@@ -23,6 +23,14 @@ type Options = {
   onScreensReady?: (hub: ScreenHub) => void
   /** Fired every frame with the per-screen state, for the page's compass. */
   onScreenInfo?: (info: ScreenInfo[]) => void
+  /**
+   * Fired between build phases with a short human label.
+   *
+   * `mountTownScene` is synchronous and blocks for seconds, so a caller that
+   * wants to paint progress has to give the browser a frame in between; the
+   * page does that by awaiting a rAF inside this callback.
+   */
+  onPhase?: (label: string) => void
 }
 
 export type TownSceneHandle = {
@@ -148,7 +156,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
 
   try {
     sky = buildSky(scene, 500)
-    world = buildWorld(scene)
+    world = buildWorld(scene, options.onPhase)
     player = new Player(camera, canvas, world, { freeWalk: true, dragLook: true })
     player.pos.y = world.heightAt(player.pos.x, player.pos.z)
     player.applyCamera(0)
