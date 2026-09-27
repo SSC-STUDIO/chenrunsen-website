@@ -66,6 +66,12 @@ const STOPS = [
 
 const clamp = THREE.MathUtils.clamp
 
+/** How long the opening dolly takes, in seconds. */
+const OPENING_SECONDS = 2.6
+/** How far back and up it starts, in metres along the surface frame. */
+const OPENING_BACK = 9.5
+const OPENING_RISE = 3.4
+
 const inputFocused = () => {
   const active = document.activeElement as HTMLElement | null
   return !!active?.closest('input,textarea,select,[contenteditable="true"],dialog[open],.song-drawer:not([hidden]),.video-panel:not([hidden])')
@@ -218,6 +224,10 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   let frame = 0
   let planetView = false
   let orbit = 0.6
+  /* Reduced motion gets the settled view immediately: the move is decoration,
+   * and someone who asked the system not to animate things did not ask for a
+   * camera dolly. */
+  let intro = media.matches ? 1 : 0
   const clock = new THREE.Clock()
   const shadowTarget = new THREE.Vector3()
   const sunOffset = new THREE.Vector3()
@@ -402,6 +412,29 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
       seatLight(fill, FILL_LOCAL, b, shadowTarget)
       seatLight(bounce, BOUNCE_LOCAL, b, shadowTarget)
       hemi.position.copy(b.up)
+    }
+
+    /* ------------------------------ opening move ------------------------------
+     *
+     * The scene used to appear by simply being there -- the canvas faded in
+     * over a poster once the build finished, and nothing ever happened.  This
+     * is the missing first beat: a slow settle from a little way back and up,
+     * down the street, into the standing eye.
+     *
+     * It is applied *after* the player has positioned the camera, so it is a
+     * pure offset and never fights the walk -- and it is the last thing to
+     * touch the camera, so a viewer who drags the view mid-move drags the
+     * settled position, not an offset that snaps back.  `intro` reaches 1 and
+     * the offset goes to zero, so there is nothing to uninstall. */
+    if (intro < 1) {
+      intro = Math.min(1, intro + dt / OPENING_SECONDS)
+      // easeOutCubic: quick to start, long settle, which is what reads as a dolly
+      const e = 1 - Math.pow(1 - intro, 3)
+      const k = 1 - e
+      const b = basisAt(player.pos.x, player.pos.z)
+      camera.position
+        .addScaledVector(b.north, OPENING_BACK * k)
+        .addScaledVector(b.up, OPENING_RISE * k)
     }
 
     sky.dome.position.copy(camera.position)

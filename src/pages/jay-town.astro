@@ -26,6 +26,7 @@ const stops = [
     <a class="skip-link" href="#song-drawer-open">跳到歌单按钮</a>
     <main class="town" id="town" aria-labelledby="town-title">
       <div class="town-poster" aria-hidden="true"></div>
+      <div class="town-veil" aria-hidden="true"></div>
       <canvas class="town-canvas" id="town-canvas" aria-hidden="true"></canvas>
       <div class="town-shade" aria-hidden="true"></div>
 
@@ -252,8 +253,24 @@ const stops = [
               trailEl.textContent = '●'.repeat(phases.length) + '○'.repeat(Math.max(0, 6 - phases.length))
             },
             onReady() {
+              /* The hand-off is a beat, not a switch.  `is-entering` fades the
+               * poster and the loader out across the first half of the opening
+               * dolly, so the street arrives *through* the wait rather than
+               * replacing it -- and it is all CSS transitions, which keep
+               * running on the compositor while the first frames are still the
+               * most expensive ones the page will ever draw.
+               *
+               * Added on the *next* frame rather than here, and that matters:
+               * this callback runs inside the same synchronous block as the
+               * world build, so a class added now is never rendered -- the
+               * animation would be attached to a state the browser never
+               * painted, and would not run at all. */
               town.classList.add('scene-ready')
               town.classList.remove('scene-error')
+              requestAnimationFrame(() => {
+                town.classList.add('is-entering')
+                window.setTimeout(() => town.classList.remove('is-entering'), 2600)
+              })
               sceneStatus.hidden = true
               sceneFailure.hidden = true
             },
@@ -544,7 +561,32 @@ const stops = [
   .scene-error .town-poster { background: #b9dbe9 url('/jay-town/scene-poster.webp') center / cover no-repeat; }
   .town-canvas { display: block; z-index: -2; opacity: 0; touch-action: none; cursor: grab; }
   .town-canvas.is-dragging { cursor: grabbing; }
-  .scene-ready .town-canvas { opacity: 1; }
+  /* The reveal.  The canvas comes up over the poster, and a sheet of warm haze
+   * lifts off the top of the frame -- like the opening frame of an anime
+   * coming up out of white.  Both are opacity/transform only, so the compositor
+   * carries them while the first frames are still being paid for. */
+  .scene-ready .town-canvas { opacity: 1; transition: opacity 1.5s ease-out .2s; }
+  .town-poster { transition: opacity 1.6s ease-out; }
+  .scene-ready .town-poster { opacity: 0; }
+  .town-veil {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(180deg, #fdf6f0 0%, #f3e7ea 42%, #e9eef0 100%);
+    opacity: 0;
+  }
+  .is-entering .town-veil { animation: town-veil-lift 2.3s cubic-bezier(.22, .7, .2, 1) forwards; }
+  @keyframes town-veil-lift {
+    0% { opacity: .94; transform: translateY(0) scale(1.06); }
+    55% { opacity: .38; transform: translateY(-3%) scale(1.02); }
+    100% { opacity: 0; transform: translateY(-9%) scale(1); }
+  }
+  .scene-error .town-veil { display: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .scene-ready .town-canvas, .town-poster { transition: none; }
+    .is-entering .town-veil { animation: none; }
+  }
   .town-shade { z-index: -1; pointer-events: none; background: linear-gradient(180deg, rgba(22, 52, 53, .27) 0%, transparent 27%, transparent 59%, rgba(20, 49, 47, .3) 100%); }
   .town.is-night .town-shade { background: linear-gradient(180deg, rgba(8, 20, 30, .53), transparent 30%, transparent 48%, rgba(7, 20, 30, .54)); }
 
