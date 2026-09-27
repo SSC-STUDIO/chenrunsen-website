@@ -51,6 +51,10 @@ export function buildSky(scene, radius = 500) {
         return fract( sin( dot( p, vec2( 127.1, 311.7 ) ) ) * 43758.5453 );
       }
 
+      float hash3( vec3 p ) {
+        return fract( sin( dot( p, vec3( 127.1, 311.7, 74.7 ) ) ) * 43758.5453 );
+      }
+
       float noise( vec2 p ) {
         vec2 i = floor( p );
         vec2 f = fract( p );
@@ -62,21 +66,58 @@ export function buildSky(scene, radius = 500) {
         return mix( a, b, u.x ) + ( c - a ) * u.y * ( 1.0 - u.x ) + ( d - b ) * u.x * u.y;
       }
 
-      // A few large soft lobes → hard cel bands (not noisy fog).
+      /* Cloud noise on the *sphere*, interpolated trilinearly.
+       *
+       * Sampling this on a 2D plane was the bug that made the sky a ring.  The
+       * old cloudField built  uv = dir.xz / max( 0.18, dir.y + 0.42 )  -- a
+       * gnomonic projection, which is singular at the zenith -- and then added
+       * a "lobe": a radial falloff from a single point in that UV space.  A
+       * radial function about one point, viewed on a dome, *is* a circle: the
+       * sky got one flat pale disc centred overhead and nothing else.
+       *
+       * 3D noise has no singular point and no preferred centre, so the cells
+       * land wherever the direction happens to fall.  The domain is scaled down
+       * in y before sampling, which flattens each cell into a bank lying across
+       * the sky rather than a ball. */
+      float cloudNoise( vec3 dir, float scale ) {
+        vec3 p = dir * scale;
+        p.y *= 0.42;
+        vec3 i = floor( p );
+        vec3 f = fract( p );
+        vec3 u = f * f * ( 3.0 - 2.0 * f );
+        float a = hash3( i );
+        float b = hash3( i + vec3( 1.0, 0.0, 0.0 ) );
+        float c = hash3( i + vec3( 0.0, 1.0, 0.0 ) );
+        float d = hash3( i + vec3( 1.0, 1.0, 0.0 ) );
+        float e = hash3( i + vec3( 0.0, 0.0, 1.0 ) );
+        float g = hash3( i + vec3( 1.0, 0.0, 1.0 ) );
+        float k = hash3( i + vec3( 0.0, 1.0, 1.0 ) );
+        float m = hash3( i + vec3( 1.0, 1.0, 1.0 ) );
+        float x0 = mix( mix( a, b, u.x ), mix( c, d, u.x ), u.y );
+        float x1 = mix( mix( e, g, u.x ), mix( k, m, u.x ), u.y );
+        return mix( x0, x1, u.z );
+      }
+
+      /* Two octaves, remapped so the field actually reaches its extremes.
+       *
+       * Averaging two octaves concentrates the result around 0.5 and never gets
+       * near 0 or 1, so a threshold against it produces a soft wash rather than
+       * the hard-edged cel masses this scene wants.  Subtracting the midpoint
+       * from the *total* weight is what puts the bottom of the range back at 0;
+       * without it the lit-top threshold below never quite fires and there are
+       * no lit tops at all. */
       float cloudField( vec3 dir ) {
-        vec2 uv = dir.xz / max( 0.18, dir.y + 0.42 );
-        uv *= 0.55;
-        float n = 0.0;
-        n += noise( uv * 1.1 + vec2( 0.7, 1.3 ) ) * 0.55;
-        n += noise( uv * 2.05 + vec2( -1.9, 0.4 ) ) * 0.32;
-        n += noise( uv * 0.45 + vec2( 2.1, -0.8 ) ) * 0.45;
-        // squash into elongated masses
-        float lobe = 1.0 - smoothstep( 0.15, 0.85, length( uv * vec2( 0.55, 1.15 ) - vec2( 0.1, 0.05 ) ) );
-        n = n * 0.72 + lobe * 0.38;
-        // height window: sit above horizon, fade near zenith
-        float band = smoothstep( -0.02, 0.12, dir.y ) * ( 1.0 - smoothstep( 0.42, 0.78, dir.y ) );
-        n *= band;
-        return n;
+        float n = cloudNoise( dir, 0.85 ) * 0.62
+                + cloudNoise( dir, 2.30 ) * 0.38;
+        n = ( n - 0.34 ) / 0.66;
+        return clamp( n * 0.68 + 0.10, 0.0, 1.0 );
+      }
+
+      /* Broken cover, not an overcast: the shapes have to be big enough to hold
+       * three flat tone bands, because that tercile split is what draws the lit
+       * top and the shadowed underside a cel cloud is made of. */
+      float cloudShape( float n ) {
+        return smoothstep( 0.30, 0.62, n );
       }
 
       void main() {
@@ -96,16 +137,28 @@ export function buildSky(scene, radius = 500) {
 
         vec3 col = mix( dayCol, nightCol, uNight );
 
-        // --- cel clouds (2–3 value bands) ---
-        float c = cloudField( dir );
-        float lit = step( 0.52, c );
-        float mid = step( 0.40, c ) * ( 1.0 - lit );
-        float shade = step( 0.30, c ) * ( 1.0 - lit ) * ( 1.0 - mid );
-        float cloudAmt = max( lit, max( mid, shade ) );
-        vec3 cloudCol = mix( uCloudShade, uCloud, lit + mid * 0.55 );
+        /* --- cel clouds ---
+         *
+         * Three flat tones out of one value: the field is divided into terciles
+         * and each one gets a colour, so a cloud is a lit top, a mid body and a
+         * shaded underside with no gradient anywhere.  That split is the whole
+         * reason this reads as anime rather than as fog.
+         *
+         * The height window is applied to the *shape* and only where the cloud
+         * is already solid, so it thins the cover toward the horizon instead of
+         * multiplying a thresholded field -- which is what produced a hard rim
+         * of white all the way round the sky. */
+        float shape = cloudShape( cloudField( dir ) );
+        float lift = dir.y * 1.25 + 0.10;
+        float cover = shape * smoothstep( -0.02, 0.26, lift ) * ( 0.55 + 0.45 * smoothstep( 0.9, 0.12, dir.y ) );
+        float lit = smoothstep( 0.56, 0.74, cover );
+        float mid = smoothstep( 0.34, 0.52, cover ) * ( 1.0 - lit );
+        float shade = cover * ( 1.0 - lit ) * ( 1.0 - mid );
+        vec3 cloudCol = mix( mix( uCloudShade, uCloud, 0.62 ), uCloud, lit );
+        cloudCol += uSunGlow * lit * 0.16 * max( 0.0, dot( dir, normalize( uSunDir ) ) );
         // day: opaque masses; night: quieter, darker silhouettes
-        float cloudOp = mix( 0.88, 0.22, uNight );
-        col = mix( col, mix( cloudCol, cloudCol * 0.45, uNight ), cloudAmt * cloudOp );
+        float cloudOp = mix( 0.92, 0.24, uNight );
+        col = mix( col, mix( cloudCol, cloudCol * 0.45, uNight ), cover * cloudOp );
 
         // --- sun disc + soft glow (day only) ---
         float sunDot = max( 0.0, dot( dir, normalize( uSunDir ) ) );
@@ -122,7 +175,7 @@ export function buildSky(scene, radius = 500) {
           float s = hash( cell.xy + cell.z * 17.0 );
           float spark = step( 0.965, s ) * step( 0.12, h );
           float tw = 0.55 + 0.45 * hash( cell.yz + 3.1 );
-          col += vec3( 0.85, 0.9, 1.0 ) * spark * tw * uNight * ( 1.0 - cloudAmt * 0.85 );
+          col += vec3( 0.85, 0.9, 1.0 ) * spark * tw * uNight * ( 1.0 - cover * 0.85 );
         }
 
         gl_FragColor = vec4( col, 1.0 );
