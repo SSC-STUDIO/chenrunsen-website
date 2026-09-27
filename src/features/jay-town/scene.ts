@@ -5,6 +5,18 @@ import { addStorefrontDetails } from './storefronts'
 import { softenCanopies } from './canopy'
 import { createCelInk } from './toon'
 import { insideDistrict } from './layout'
+import { addToriiApproach } from './extras/torii-approach'
+import { addRecordAlley } from './extras/record-alley'
+import { addPlazaCrossing } from './extras/plaza-crossing'
+import { addStationPlatform } from './extras/station-platform'
+import { addRiverBank } from './extras/river-bank'
+import { addSideStreets } from './extras/side-streets'
+import { addNightLanterns } from './extras/night-lanterns'
+import { addSkyLife } from './extras/sky-life'
+import { addShopVariety } from './extras/shop-variety'
+import { addMvScreens } from './extras/mv-screens'
+
+type DetailHandle = { update?: (time: number, night: number) => void; dispose: () => void }
 
 type Options = {
   onReady?: () => void
@@ -108,12 +120,26 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   let details: ReturnType<typeof addTownDetails>
   let storefronts: ReturnType<typeof addStorefrontDetails>
   let canopies: ReturnType<typeof softenCanopies>
+  const streetDetails: DetailHandle[] = []
   try {
     world = buildTown(scene)
     details = addTownDetails(scene)
     storefronts = addStorefrontDetails(scene)
     canopies = softenCanopies(scene)
+    streetDetails.push(
+      addToriiApproach(scene),
+      addRecordAlley(scene),
+      addPlazaCrossing(scene),
+      addStationPlatform(scene),
+      addRiverBank(scene),
+      addSideStreets(scene),
+      addNightLanterns(scene),
+      addSkyLife(scene),
+      addShopVariety(scene),
+      addMvScreens(scene),
+    )
   } catch (error) {
+    streetDetails.forEach(detail => detail.dispose())
     canopies?.dispose()
     storefronts?.dispose()
     world?.dispose()
@@ -173,7 +199,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   let nightTarget = 0, night = 0, yaw = 0, pitch = 0.045
   let elapsed = performance.now() / 1000, previousTime = 0, frame = 0, zone = 0
   let shadowCenter = Infinity
-  let drag: { id: number; x: number; y: number } | null = null
+  let drag: { id: number; x: number; y: number; startX: number; startY: number; moved: boolean } | null = null
   let journey: { from: THREE.Vector3; to: THREE.Vector3; yawFrom: number; yawTo: number; start: number } | null = null
   let wheelVelocity = 0
   const position = camera.position.clone()
@@ -182,6 +208,8 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   const dayGround = new THREE.Color(0x8d7eaa), nightGround = new THREE.Color(0x3a3558)
   const daySun = new THREE.Color(0xffe2b8), nightSun = new THREE.Color(0xacc8ff)
   const dayFill = new THREE.Color(0xa9c0e6), nightFill = new THREE.Color(0x6e82b8)
+  const pointer = new THREE.Vector2()
+  const raycaster = new THREE.Raycaster()
 
   const inputFocused = () => {
     const active = document.activeElement as HTMLElement | null
@@ -224,18 +252,48 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   const clearMovement = () => { keys.clear(); mobileMove.set(0, 0); wheelVelocity = 0; drag = null; canvas.classList.remove('is-dragging') }
   const onPointerDown = (event: PointerEvent) => {
     if (paused || event.button !== 0) return
-    drag = { id: event.pointerId, x: event.clientX, y: event.clientY }
+    drag = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: false }
     journey = null
     canvas.setPointerCapture(event.pointerId)
     canvas.classList.add('is-dragging')
   }
   const onPointerMove = (event: PointerEvent) => {
     if (!drag || drag.id !== event.pointerId) return
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 6) drag.moved = true
     yaw -= (event.clientX - drag.x) * 0.003
     pitch = clamp(pitch - (event.clientY - drag.y) * 0.0027, -0.85, 0.85)
     drag.x = event.clientX; drag.y = event.clientY
   }
-  const onPointerUp = () => { drag = null; canvas.classList.remove('is-dragging') }
+  const songIdFromObject = (object: THREE.Object3D | null): string | null => {
+    let node: THREE.Object3D | null = object
+    while (node) {
+      const songId = node.userData?.songId
+      if (typeof songId === 'string' && songId) return songId
+      node = node.parent
+    }
+    return null
+  }
+  const pickSongAt = (clientX: number, clientY: number) => {
+    const rect = canvas.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+    pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1
+    pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1
+    raycaster.setFromCamera(pointer, camera)
+    const hits = raycaster.intersectObjects(scene.children, true)
+    for (const hit of hits) {
+      const songId = songIdFromObject(hit.object)
+      if (!songId) continue
+      canvas.dispatchEvent(new CustomEvent('jay-town-open-song', { bubbles: true, detail: { songId } }))
+      return
+    }
+  }
+  const onPointerUp = (event: PointerEvent) => {
+    const wasClick = event.type === 'pointerup' && drag && drag.id === event.pointerId && !drag.moved
+    const clickX = event.clientX, clickY = event.clientY
+    drag = null
+    canvas.classList.remove('is-dragging')
+    if (wasClick && !paused) pickSongAt(clickX, clickY)
+  }
   const onWheel = (event: WheelEvent) => {
     if (paused) return
     event.preventDefault()
@@ -319,6 +377,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     }
     world.update(animateTime, night)
     canopies.update(night, canvas.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)))
+    streetDetails.forEach(detail => detail.update?.(animateTime, night))
     updatePetals(animateTime)
     ink.render(renderer, scene, camera)
     frame = requestAnimationFrame(tick)
@@ -349,6 +408,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     details.dispose()
     storefronts.dispose()
     canopies.dispose()
+    streetDetails.forEach(detail => detail.dispose())
     sun.shadow.dispose()
     ink.dispose()
     resources.forEach(resource => resource.dispose())

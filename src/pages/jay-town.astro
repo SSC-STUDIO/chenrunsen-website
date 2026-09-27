@@ -393,6 +393,11 @@ const stops = [
       filterSongs()
       updatePlayer()
 
+      canvas.addEventListener('jay-town-open-song', ((event: CustomEvent<{ songId: string }>) => {
+        const song = findSong(event.detail?.songId || '')
+        if (song) openSong(song)
+      }) as EventListener)
+
       const heldPointers = new Map<number, { x: number; z: number; button: HTMLButtonElement }>()
       function updateMovement() {
         let x = 0, z = 0
