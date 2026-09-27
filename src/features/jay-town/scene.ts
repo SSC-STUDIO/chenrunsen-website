@@ -304,6 +304,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     hemi.color.copy(day.hemiSky).lerp(night.hemiSky, t)
     hemi.groundColor.copy(day.hemiGround).lerp(night.hemiGround, t)
     if (scene.fog instanceof THREE.Fog) scene.fog.color.copy(day.fog).lerp(night.fog, t)
+    sky.setNight(t)
   }
 
   function tick() {
