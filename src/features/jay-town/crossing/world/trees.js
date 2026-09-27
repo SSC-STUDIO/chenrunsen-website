@@ -115,7 +115,11 @@ export function buildSakura(ctx, spots) {
     const lean = spot.lean ?? 0;
     const leanDir = spot.leanDir ?? rng.range(0, Math.PI * 2);
 
-    const trunkH = 2.55 * S * rng.range(0.9, 1.12);
+    /* 2.35 rather than 2.55, and the limbs below go further out: a cherry's crown
+     * is wider than it is deep, and at the roadside it is the width you see --
+     * the old proportions put the whole crown above head height on a pole, which
+     * is what made the avenue read as a row of columns. */
+    const trunkH = 2.35 * S * rng.range(0.9, 1.12);
     const trunkR = 0.19 * S;
     const limbR = trunkR * 0.36;
     const twigR = limbR * 0.5;
@@ -192,11 +196,11 @@ export function buildSakura(ctx, spots) {
     const limbCount = 4 + Math.floor(rng.next() * 3);
     for (let i = 0; i < limbCount; i++) {
       const a = (i / limbCount) * Math.PI * 2 + rng.range(-0.45, 0.45);
-      const len = 1.95 * S * rng.range(0.72, 1.28);
-      /* Flatter tilt than it was, and uneven lengths: 0.72-1.12 rather than
+      const len = 2.15 * S * rng.range(0.72, 1.28);
+      /* Flatter tilt than it was, and uneven lengths: 0.8-1.2 rather than
        * 0.62-1.05 opens the crown *outward*, which is most of the difference
        * between a cherry's silhouette and a young oak's. */
-      const tilt = rng.range(0.72, 1.12);
+      const tilt = rng.range(0.8, 1.2);
       const end = new THREE.Vector3(
         top.x + Math.cos(a) * Math.sin(tilt) * len,
         top.y + Math.cos(tilt) * len,
@@ -264,25 +268,27 @@ export function buildSakura(ctx, spots) {
      * amount of tuning a count or a radius fixes a placement rule that does not
      * reference the wood.
      *
-     * What is new since is only the *shape* of the sleeve, and three things do
-     * it:
+     * What is new since is the *shape* of the sleeve, and three things do it:
      *
      *  - **the clumps are small and there are four times as many of them.**  A
-     *    quarter-metre blob is a balloon whatever colour it is; at 0.10 m and
-     *    half again the count the same mass reads as blossom.  See the header for
-     *    why that is free.
-     *  - **they sit up and out of the branch.**  A clump is stepped off the axis
-     *    on the side that faces the light, which is where a cherry actually
-     *    carries its flowers, and it leaves the underside of the limb bare -- so
-     *    the wood reads from below and the crown does not become a tube.
-     *  - **the interior is filled with the big dark ones.**  A crown is not a
-     *    shell: behind the lit rim there is a metre of blossom in its own shade.
-     *    Eight per cent of the budget, pushed down the ramp, is what gives the
-     *    mass a middle instead of a hole.
+     *    quarter-metre blob is a balloon whatever colour it is; at a tenth of a
+     *    metre and four times the count the same triangles read as blossom.  See
+     *    the header for why that is free.
+     *  - **they spiral round the branch** rather than scattering onto whichever
+     *    side of it the RNG picked.  Scattered, two neighbouring clumps land a
+     *    whole diameter apart and the limb comes out a dotted line with sky
+     *    behind it; a spiral is continuous along the branch, and still uneven
+     *    enough that the surface never reads as a pipe.
+     *  - **the distance they step off the branch is a falloff, not a constant.**
+     *    Dense against the wood and thinning out to half a metre, which is what
+     *    fills the space between two limbs -- a shell one clump deep is
+     *    transparent from every angle but the one you happen to be looking from.
      *
-     * The one number that is *not* per-tree is the step: blossom is placed every
-     * 0.13 m of branch, so a long limb carries more of it than a twig does, and
-     * the tips, which carry the most twigs per metre, come out heaviest. */
+     * The budget is spent by *share*, so the four passes stay in proportion as
+     * `dens` thins them for the lite path, and it is allocated along the branches
+     * in proportion to length: a metre of twig carries as much blossom as a metre
+     * of limb, and since the tips carry the most twigs per metre they come out
+     * heaviest by arithmetic rather than by a fudge factor. */
 
     let yMin = Infinity, yMax = -Infinity;
     for (const seg of limbs_) {
@@ -328,20 +334,20 @@ export function buildSakura(ctx, spots) {
         r * rng.range(0.9, 1.12),
       ));
       /* Height picks the band, the jitter breaks the band up, and the warm shift
-       * on about a quarter of them keeps the mass from reading as one sheet of
-       * plastic.  Both are deliberately small: the first pass at this jittered
-       * +-0.16 and shifted a quarter of the clumps warm, and the crown came out
-       * as gravel -- a hundred clumps each a slightly different pink reads as a
-       * hundred objects, not as one tree.  The gradient over the crown is what
-       * shapes it; the noise only has to break the banding. */
+       * on a few of them keeps the mass from reading as one sheet of plastic.
+       * Both are deliberately small: the first pass at this jittered +-0.16 and
+       * shifted a quarter of the clumps warm, and the crown came out as gravel --
+       * a hundred clumps each a slightly different pink read as a hundred
+       * objects, not as one tree.  The gradient over the crown is what shapes it;
+       * the noise only has to break the banding. */
       const c = blossomTone(toneBias + hi + (py - yMin) / ySpan * 0.55 + rng.range(-0.07, 0.07));
       if (rng.next() < 0.15) c.lerp(BLOSSOM_WARM, 0.3);
       blobC.push(c.r, c.g, c.b);
     };
 
-    /* ~600 clumps at 20 triangles is a little under the 10 000 triangles the old
-     * 128 balloons cost at 80 -- spent on clumps small enough not to be read
-     * individually, which is the whole difference. */
+    /* ~560 clumps at 20 triangles is the ~10 000 triangles the old 128 balloons
+     * cost at 80 -- spent on clumps small enough not to be read individually,
+     * which is the whole difference. */
     const budget = Math.round((510 + Math.floor(rng.next() * 100)) * dens);
 
     /* Length-weighted, so every metre of branch gets the same blossom.  Built
@@ -517,17 +523,7 @@ export function buildSakura(ctx, spots) {
   wood.name = 'sakuraWood';
   ctx.add(wood);
 
-  /* Twenty triangles, and shaded *smooth*.
-   *
-   * The reason the canopy is finally clumps this small is arithmetic -- detail 0
-   * is a quarter of detail 1, so the same budget buys four times as many -- but
-   * the reason they do not read as gravel is the normals.  `PolyhedronGeometry`
-   * only asks for flat normals at detail 0, so this puts the sphere's own normals
-   * back: twenty triangles still draw a rougher *outline* than eighty, and at a
-   * tenth of a metre that is a scalloped edge, which is what blossom has.  What
-   * it stops is the interior reading as a cut gem. */
   const blobGeo = new THREE.IcosahedronGeometry(1, 0);
-  blobGeo.normalizeNormals();
   const canopies = [];
   if (blobM.length) {
     /* One mesh, one material, colour per instance.  `color` is white and the
@@ -541,7 +537,7 @@ export function buildSakura(ctx, spots) {
      * high-key two-band ramp. */
     const inst = new THREE.InstancedMesh(
       blobGeo,
-      cel({ color: 0xffffff, bands: 'soft', tint: 0xd8b2c6, flat: false }),
+      cel({ color: 0xffffff, bands: 'soft', tint: 0xd8b2c6 }),
       blobM.length
     );
     const c = new THREE.Color();
