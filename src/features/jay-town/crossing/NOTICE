@@ -1,0 +1,18 @@
+Sakura Crossing
+===============
+
+This directory vendors world and renderer code from:
+
+  https://github.com/Kenton-GMI/sakura-crossing
+  branch: main
+  commit: de01898e89c7f6ab3fad93fa802f0f5ac66fbd81 (2026-07-29)
+
+Copyright (c) 2026 Kenton Wang
+Licensed under the MIT License. See LICENSE alongside this notice.
+
+Not included from upstream (not MIT-redistributable / out of scope):
+  - public/audio/ and the stock background music track
+  - src/core/audio.js (playlist loader for that audio)
+
+Site-specific theme labels, stop mapping, and Astro mount wiring live outside
+this NOTICE's upstream tree (see ../scene.ts and theme.js).
