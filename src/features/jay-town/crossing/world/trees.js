@@ -151,10 +151,52 @@ export function buildSakura(ctx, spots) {
       }
     }
 
-    /* Blossom: many small clumps anchored at tips, not one uniform cloud.
-     * Spread is tight around each tip so neighbouring limbs leave sky gaps;
-     * size varies so the mass has thickness without reading as boulders. */
-    const baseCount = Math.round((52 + Math.floor(rng.next() * 18)) * dens);
+    /* Blossom: one connected mass at the crown, built by rejection sampling.
+     *
+     * What was here before scattered `52 + rng*18` clumps uniformly in a box
+     * of +-0.42..0.68 m around whichever limb tip the picker chose, with
+     * radii of 0.12..0.30 m.  Limb tips on a 1.2-scale tree sit up to four
+     * metres apart, and a 0.12 m puff at +-0.68 m from its own tip touches
+     * neither its neighbours nor anything else -- so *the great majority of
+     * clumps landed in empty air*, and the crown read as a cloud of pink
+     * dinner plates floating off bare sticks.  That is not a tuning miss; the
+     * spread was simply wider than twice the radius, so overlap could not
+     * happen by construction.
+     *
+     * Three things fix it, and all three are needed:
+     *
+     *  - **A crown volume, not a tip volume.**  Every clump is placed inside
+     *    the sphere the limbs actually sweep.  As long as the count is high
+     *    enough, a uniform fill of that sphere has to be connected, without
+     *    any pairwise testing -- which matters, because a real cluster test
+     *    over ~90 blobs a tree would be the most expensive thing in the world
+     *    build.
+     *  - **Explicit no-overlap rejection**, so the mass has visible structure
+     *    instead of being a smooth ball.  Placing each clump at a random point
+     *    and retrying when it lands too close to another is the cheap way to
+     *    get a packed, clustered look -- and the retries naturally fill the
+     *    holes rather than clumping.
+     *  - **Tones weighted by position.**  The old code let 62% of clumps be
+     *    'mid' and then re-rolled 16% of them at random, which is what put
+     *    white puffs deep inside the crown; here a `deepPink` roll puts the
+     *    saturated tone on the *inside* and undersides, where the light would
+     *    actually be blocked. */
+    const baseCount = Math.round((78 + Math.floor(rng.next() * 20)) * dens);
+    const crown = new THREE.Vector3();
+    const tipDist = [];
+    for (const c of canopyCenters) {
+      crown.add(c.p);
+      tipDist.push(c.p.distanceTo(top));
+    }
+    crown.multiplyScalar(1 / canopyCenters.length);
+    // The crown sits slightly above the mean of its tips, because blossom
+    // builds up on the outside of a limb, not on its axis.
+    crown.y += 0.34 * S;
+    tipDist.sort((a, b) => a - b);
+    const crownR = Math.max(1.0, tipDist[Math.floor(tipDist.length * 0.9)] * 1.02);
+    const big = 0.33 * S;
+    const small = 0.24 * S;
+
     let yMin = Infinity, yMax = -Infinity;
     for (const c of canopyCenters) {
       yMin = Math.min(yMin, c.p.y);
@@ -162,8 +204,8 @@ export function buildSakura(ctx, spots) {
     }
     const ySpan = Math.max(0.5, yMax + 0.9 * S - yMin);
 
+    /** Weighted pick of a canopy anchor, so blossom favours the limb ends. */
     const pickCenter = () => {
-      // weight toward tips so mid-limb air stays emptier
       let t = rng.next() * canopyCenters.reduce((s, c) => s + c.w, 0);
       for (const c of canopyCenters) {
         t -= c.w;
@@ -172,46 +214,88 @@ export function buildSakura(ctx, spots) {
       return canopyCenters[canopyCenters.length - 1].p;
     };
 
-    for (let i = 0; i < baseCount; i++) {
-      const c = pickCenter();
-      /* Three size bands: a few soft cores, many mid clumps, fine edge puffs.
-       * Earlier 0.5–0.6·S lumps still read as painted balloons once they
-       * overlapped; keeping most under ~0.28·S is what breaks the sphere. */
+    /* Placed clumps, as (centre, radius).  Kept flat arrays rather than
+     * objects: this is the hot loop of the world build and there are a few
+     * thousand of them across the town. */
+    const placed = [];
+    const minGap = 0.17 * S;
+
+    const addBlob = (px, py, pz, r) => {
       const roll = rng.next();
-      const band = roll < 0.18 ? 'core' : roll < 0.62 ? 'mid' : 'edge';
-      const r = (band === 'core' ? 0.30 : band === 'mid' ? 0.20 : 0.12) * S * rng.range(0.75, 1.15);
-      const spread = band === 'core' ? 0.42 : band === 'mid' ? 0.55 : 0.68;
-      const px = c.x + rng.range(-spread, spread) * S;
-      const py = c.y + rng.range(-0.28, 0.42) * S;
-      const pz = c.z + rng.range(-spread, spread) * S;
-      let tone;
-      if (spot.tone !== undefined) tone = spot.tone;
-      else {
-        const hi = (py - yMin) / ySpan;
-        // lighter on outer/high edges
-        const radial = Math.hypot(px - top.x, pz - top.z) / Math.max(0.8, 2.2 * S);
-        tone = (hi > 0.55 || radial > 0.7 || band === 'edge') ? 0 : hi < 0.26 ? 2 : 1;
-        if (rng.next() < 0.16) tone = (tone + 1) % 3;
-      }
-      blobs[tone].push(trs(px, py, pz,
+      const radial = Math.hypot(px - crown.x, pz - crown.z) / crownR;
+      const hi = (py - yMin) / ySpan;
+      /* Sunlit tops and the lid; deep pink on the undersides and the shaded
+       * inner mass; mid everywhere else, which is most of it.  A per-tree
+       * `tone` still overrides the lot, which is how a whole tree is pinned to
+       * one shade. */
+      const tone = spot.tone !== undefined ? spot.tone
+        : (hi > 0.62 || radial > 0.64) ? 0
+          : (hi < 0.3 || (radial < 0.42 && roll < 0.5)) ? 2
+            : 1;
+      blobs[tone].push(trs(
+        px, py, pz,
         rng.range(0, 3), rng.range(0, 3), rng.range(0, 3),
-        r * rng.range(0.85, 1.2),
-        r * rng.range(0.48, 0.78),
-        r * rng.range(0.8, 1.15)));
+        r * rng.range(0.92, 1.16),
+        r * rng.range(0.6, 0.84),
+        r * rng.range(0.88, 1.14),
+      ));
+      placed.push(px, py, pz, r);
+    };
+
+    for (let i = 0; i < baseCount; i++) {
+      let px = 0, py = 0, pz = 0, r = small, ok = false;
+      for (let tries = 0; tries < 6 && !ok; tries++) {
+        r = big * rng.range(0.68, 1.32);
+        // Cube-root the radius so the samples fill the *volume* evenly rather
+        // than piling into the middle, then squash vertically: a cherry crown
+        // is wider than it is deep.
+        const rr = crownR * Math.cbrt(rng.next());
+        const th = rng.range(0, Math.PI * 2);
+        const ph = Math.acos(rng.range(-1, 1));
+        px = crown.x + rr * Math.sin(ph) * Math.cos(th);
+        py = crown.y + rr * Math.cos(ph) * 0.66;
+        pz = crown.z + rr * Math.sin(ph) * Math.sin(th);
+
+        ok = true;
+        for (let k = 0; k < placed.length; k += 4) {
+          const dx = px - placed[k];
+          const dy = py - placed[k + 1];
+          const dz = pz - placed[k + 2];
+          if (dx * dx + dy * dy + dz * dz < minGap * minGap) { ok = false; break; }
+        }
+      }
+      addBlob(px, py, pz, r);
     }
 
-    // airy highlight flecks on the lit rim (keep the crown from reading as rock)
-    const flecks = Math.round((12 + Math.floor(rng.next() * 6)) * dens);
+    /* A second, looser pass walking back out over the tips.  This is what
+     * pulls the blossom onto the branch ends, so the wood comes out of the
+     * mass instead of the mass hanging beside it -- and being looser than the
+     * first pass, it can sit outside the crown radius and break the silhouette
+     * up so the tree is not a ball. */
+    const fill = Math.round(22 * dens);
+    for (let i = 0; i < fill; i++) {
+      const c = pickCenter();
+      const r = 0.27 * S * rng.range(0.7, 1.25);
+      addBlob(
+        c.x + rng.range(-0.42, 0.42) * S,
+        c.y + rng.range(-0.3, 0.42) * S,
+        c.z + rng.range(-0.42, 0.42) * S,
+        r,
+      );
+    }
+
+    /* The lit rim.  Small and pale, and only on the outer shell -- these are
+     * what stop the mass reading as one flat pink solid. */
+    const flecks = Math.round((16 + Math.floor(rng.next() * 8)) * dens);
     for (let i = 0; i < flecks; i++) {
       const c = pickCenter();
-      const r = 0.1 * S * rng.range(0.7, 1.15);
-      blobs[0].push(trs(
-        c.x + rng.range(-0.85, 0.85) * S,
-        c.y + rng.range(0.05, 0.55) * S,
-        c.z + rng.range(-0.85, 0.85) * S,
-        rng.range(0, 3), rng.range(0, 3), rng.range(0, 3),
-        r, r * 0.45, r
-      ));
+      const r = 0.09 * S * rng.range(0.8, 1.2);
+      addBlob(
+        c.x + rng.range(-0.55, 0.55) * S,
+        c.y + rng.range(0.14, 0.6) * S,
+        c.z + rng.range(-0.55, 0.55) * S,
+        r,
+      );
     }
 
     // a few loose petal cards near tips (not solid mass)
