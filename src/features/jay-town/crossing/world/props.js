@@ -1141,60 +1141,229 @@ export function makeLaundryPole(o = {}) {
  * street never collapses to a stick or slab.  Use an unlit `flat()` material
  * in the sky — MeshToon against the dome reads as a black void.
  */
+/**
+ * A crow, as a bird rather than as a plus sign.
+ *
+ * Module scope on purpose: every bird in the world is this one geometry and a
+ * dozen instances, so the tables are built once.
+ *
+ * ## Why this is hand-built polygons
+ *
+ * The previous version was eight axis-aligned boxes: an 0.08 x 0.055 m body
+ * box, a wing *box* 0.58 m wide and 0.18 deep lying flat, two dihedral tips,
+ * a cone bill and a three-box tail.  Seen from the ground -- which is where
+ * every bird in this world is seen from -- a box reads as its own silhouette,
+ * so the bird came out as a small rectangle crossed by a long bar.  Which is
+ * what it looked like: a plus sign.  Boxes also cannot taper, so no amount of
+ * scaling made the body anything but a brick.
+ *
+ * So this is explicit vertex lists instead.  Two silhouettes do all the work
+ * and they are the two a bird actually has:
+ *
+ *  - **the side view**, in the XY plane at z = 0: a tapered body with a
+ *    distinct head sitting proud of it, a bill, and a wedge tail.  That is
+ *    what a crow looks like on a wire from ten metres.
+ *  - **the plan view**, in the XZ plane: swept wings with a `dihedral` fold so
+ *    the tips lift, which is what stops a top-down bird from being a plank.
+ *
+ * The body is a two-sided sheet rather than a solid, and every material that
+ * draws it is `DoubleSide`.  At 0.4 m on a wire nothing can tell, and it halves
+ * the triangle count over a lathe.
+ *
+ * `z+` is the tail and `z-` is the bill, which is the convention the old
+ * header documented for `Object3D.lookAt` and which the perch code relies on.
+ */
+/**
+ * Side profile of the body, in local metres, bill toward -z.
+ *
+ * The x column is the **half-width** at that station, not zero: a crow is a
+ * bird, and a bird has a round chest.  The first version of this was a flat
+ * sheet on the centreline, which is invisible from dead ahead -- and a perched
+ * bird on a wire over a street is looked at from dead ahead most of the time.
+ * Widening the profile into a hull costs twelve more vertices and fixes the one
+ * angle the old box model got accidentally right.
+ *
+ * The doubling at the head is what makes it read as a bird rather than a
+ * torpedo: the profile steps *up* out of the shoulders at the nape and then
+ * narrows again, so there is a neck to see.
+ */
+const BODY_VERTS = [
+  // x,     y,      z,     half-width
+  [0.000, -0.010, 0.245, 0.012],  // 0  tail tip
+  [0.000, 0.026, 0.095, 0.042],   // 1  rump
+  [0.000, 0.052, -0.030, 0.054],  // 2  shoulder / back
+  [0.000, 0.068, -0.112, 0.038],  // 3  nape
+  [0.000, 0.088, -0.152, 0.032],  // 4  crown
+  [0.000, 0.080, -0.205, 0.020],  // 5  top of the bill
+  [0.000, 0.052, -0.238, 0.009],  // 6  bill point
+  [0.000, 0.042, -0.200, 0.018],  // 7  under the bill
+  [0.000, 0.032, -0.148, 0.034],  // 8  throat
+  [0.000, 0.010, -0.048, 0.052],  // 9  breast
+  [0.000, -0.004, 0.062, 0.045],  // 10 belly
+  [0.000, -0.012, 0.172, 0.022],  // 11 under-tail
+];
+
+const BODY_TRIS = [
+  [0, 1, 2], [0, 2, 9], [0, 9, 10],
+  [9, 2, 3], [9, 3, 8], [8, 3, 4],
+  [8, 4, 5], [8, 5, 7], [7, 5, 6],
+  [10, 9, 11], [11, 9, 8], [11, 8, 7],
+];
+
+/** One swept wing, in local metres, for the left (-x) side. */
+const WING_VERTS = [
+  [-0.030, 0.012, -0.070],   // 0 shoulder, leading edge
+  [-0.345, 0.052, 0.000],    // 1 tip, leading -- the dihedral lift lives here
+  [-0.268, 0.050, 0.118],    // 2 tip, trailing
+  [-0.058, 0.010, 0.118],    // 3 root, trailing
+];
+
+const WING_TRIS = [[0, 1, 2], [0, 2, 3]];
+
+/**
+ * Flatten a vertex/index pair into one `BufferGeometry`.
+ *
+ * `mirror` negates x *and reverses the winding*, because a mirrored triangle
+ * has its normal on the other side -- and these sheets are two-sided anyway,
+ * but the computed normals still have to agree between the two wings or one of
+ * them shades inside out.
+ */
+function buildSheet(verts, tris, scale, mirror = false) {
+  const flat = [];
+  for (const [a, b, c] of tris) {
+    const order = mirror ? [a, c, b] : [a, b, c];
+    for (const i of order) {
+      flat.push(verts[i][0] * scale * (mirror ? -1 : 1), verts[i][1] * scale, verts[i][2] * scale);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(flat, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * The body as a closed hull: the profile mirrored to each side by its own
+ * half-width, with a cap at each end.
+ *
+ * Vertices are emitted twice, once at `x = -w` and once at `x = +w`, and the
+ * side fan is drawn between the two offsets.  The two end caps are fans because
+ * every profile here tapers to a point at the bill and the tail, so a cap is
+ * three triangles rather than a polygon.
+ */
+function buildBody(verts, tris, scale) {
+  const flat = [];
+  const w = (i) => verts[i][3] * scale;
+  const px = (i, s) => [s * w(i), verts[i][1] * scale, verts[i][2] * scale];
+
+  for (const [a, b, c] of tris) {
+    // left side
+    flat.push(...px(a, -1), ...px(b, -1), ...px(c, -1));
+    // right side, reversed so its normal points the other way
+    flat.push(...px(a, 1), ...px(c, 1), ...px(b, 1));
+    // the two closing strips between the sides
+    flat.push(...px(a, -1), ...px(a, 1), ...px(b, 1));
+    flat.push(...px(a, -1), ...px(b, 1), ...px(b, -1));
+    flat.push(...px(b, -1), ...px(b, 1), ...px(c, 1));
+    flat.push(...px(b, -1), ...px(c, 1), ...px(c, -1));
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(flat, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Low-poly bird, bill toward local -Z.
+ *
+ * `body` is a closed hull, so it reads as a volume from any angle; `wingL` and
+ * `wingR` are separate meshes so a caller can fold them against the flanks.  See
+ * `makeCrow` for why that matters.
+ */
+export function birdParts(scale = 1) {
+  return {
+    body: birdSilhouetteGeo(scale),
+    wingL: buildSheet(WING_VERTS, WING_TRIS, scale, false),
+    wingR: buildSheet(WING_VERTS, WING_TRIS, scale, true),
+  };
+}
+
 export function birdSilhouetteGeo(scale = 1) {
-  const s = scale;
-  return bake([
-    // body hull along −Z (flight)
-    { geometry: new THREE.BoxGeometry(0.08 * s, 0.055 * s, 0.28 * s),
-      matrix: trs(0, 0.02 * s, -0.02 * s) },
-    // wing sheet, one plane
-    { geometry: new THREE.BoxGeometry(0.58 * s, 0.028 * s, 0.18 * s),
-      matrix: trs(0, 0.035 * s, -0.04 * s) },
-    // dihedral tips (read as wings, not a plank)
-    { geometry: new THREE.BoxGeometry(0.16 * s, 0.022 * s, 0.1 * s),
-      matrix: trs(-0.28 * s, 0.05 * s, -0.02 * s, 0, 0, 0.35) },
-    { geometry: new THREE.BoxGeometry(0.16 * s, 0.022 * s, 0.1 * s),
-      matrix: trs(0.28 * s, 0.05 * s, -0.02 * s, 0, 0, -0.35) },
-    // bill toward −Z (Cone tip is +Y; +90° X maps +Y → −Z)
-    { geometry: new THREE.ConeGeometry(0.022 * s, 0.09 * s, 5),
-      matrix: trs(0, 0.02 * s, -0.2 * s, Math.PI / 2, 0, 0) },
-    // forked tail toward +Z
-    { geometry: new THREE.BoxGeometry(0.1 * s, 0.02 * s, 0.12 * s),
-      matrix: trs(0, 0.03 * s, 0.16 * s) },
-    { geometry: new THREE.BoxGeometry(0.04 * s, 0.016 * s, 0.08 * s),
-      matrix: trs(-0.05 * s, 0.03 * s, 0.22 * s, 0, 0.25, 0) },
-    { geometry: new THREE.BoxGeometry(0.04 * s, 0.016 * s, 0.08 * s),
-      matrix: trs(0.05 * s, 0.03 * s, 0.22 * s, 0, -0.25, 0) },
-  ]);
+  return buildBody(BODY_VERTS, BODY_TRIS, scale);
 }
 
 /**
  * A crow on a wire.
  *
- * Earlier sphere/box builds read as black slabs or sticks against the sky.
- * Same low-poly bird as the flock, unlit so it stays a readable silhouette.
+ * ## The wings are folded, because it is perched
+ *
+ * The first version put the flying pose on a bird standing on a cable, so what
+ * hung over the street was a cruciform silhouette with both wings out -- which
+ * is not what a perched crow looks like and was the second half of why the
+ * model read as wrong.  Here the wings are hinged back to sweep along the
+ * flanks: rotated about y to lie fore-and-aft, rolled up against the body, and
+ * pushed out far enough that the tips cross just behind the tail, which is the
+ * shape a real one has and the reason a crow's silhouette is a wedge.
+ *
+ * ## And it moves a little
+ *
+ * Reported as "it just sits there motionless", which for a perched bird is
+ * *nearly* right, but not quite: a perched crow shifts its weight, flicks its
+ * tail and turns its head to look at things.  `tick` is a small idle loop --
+ * yaw, a head lift, a tail flick -- driven from `buildSkyBirds` with a per-bird
+ * phase so the four of them are not in lockstep.  It is a few degrees of
+ * rotation, which is all it takes for the eye to stop reading a model as a
+ * decal.
  */
 export function makeCrow(o = {}) {
   const g = new THREE.Group();
   const dark = flat({
-    color: 0x4a4658,
+    color: 0x3a3648,
     side: THREE.DoubleSide,
   });
-  const beakMat = flat({ color: 0x6a6478 });
-  const sc = o.scale ?? 1.2;
+  const { body, wingL, wingR } = birdParts(o.scale ?? 1.2);
 
-  const body = new THREE.Mesh(birdSilhouetteGeo(sc), dark);
-  // Perched: yaw faces along the wire; lift slightly and pitch so the profile
-  // reads from the street (not edge-on into the sky).
-  body.rotation.x = -0.15;
-  body.position.y = 0.08;
-  body.castShadow = true;
-  body.userData.noOutline = true;
-  g.add(body);
+  const bodyMesh = new THREE.Mesh(body, dark);
+  /* Perched: pitched forward a little so the breast sits down over the feet and
+   * the tail lifts, which is the difference between perching and levitating. */
+  bodyMesh.rotation.x = -0.18;
+  bodyMesh.castShadow = true;
+  bodyMesh.userData.noOutline = true;
+  g.add(bodyMesh);
 
-  for (const s of [-1, 1]) {
-    g.add(cyl(0.006, 0.006, 0.05, 4, beakMat, s * 0.022, 0.025, 0.02));
+  const wings = new THREE.Group();
+  for (const [geo, side] of [[wingL, -1], [wingR, 1]]) {
+    const wing = new THREE.Mesh(geo, dark);
+    wing.userData.noOutline = true;
+    wings.add(wing);
+    /* Fold: swung back along the body (y), rolled up on the flank (x), and the
+     * two tips closing behind the tail rather than meeting on the spine. */
+    wing.rotation.y = side * 1.32;
+    wing.rotation.x = side * 0.34;
+    wing.rotation.z = side * 0.62;
   }
+  wings.position.set(0, 0.02, 0.02);
+  g.add(wings);
+
+  const feet = flat({ color: 0x2b2838 });
+  for (const s of [-1, 1]) {
+    const leg = cyl(0.007, 0.007, 0.05, 4, feet, s * 0.024, -0.03, 0.015);
+    g.add(leg);
+  }
+
+  let t = 0;
+  /** Idle: shift, look about, flick the tail.  `phase` desynchronises a row. */
+  g.userData.tick = (dt, phase = 0) => {
+    t += dt;
+    const a = t * 0.62 + phase;
+    const look = t * 0.31 + phase * 1.7;
+    bodyMesh.rotation.y = Math.sin(look) * 0.24 + Math.sin(look * 0.37) * 0.13;
+    bodyMesh.rotation.z = Math.sin(a) * 0.035;
+    bodyMesh.position.y = Math.sin(a * 0.5) * 0.008;
+    // the tail lifts on the same beat the bird leans forward
+    wings.rotation.x = Math.sin(a * 0.5) * 0.05;
+  };
 
   g.position.set(o.x, o.y ?? 0, o.z);
   g.rotation.y = o.ry ?? 0;

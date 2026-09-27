@@ -69,17 +69,28 @@ export function buildSkyBirds(ctx, poles = []) {
 
   const group = new THREE.Group();
   group.name = 'wireCrows';
-  /* Static, so they must NOT be `planetRigid`: unlike the old flock there is
-   * nothing to animate, and letting the bake fold them into the world is what
-   * makes them batch with everything else. */
+  /* Static geometry, so they must NOT be `planetRigid` -- but they are not
+   * quite static either: each one runs a small idle tick.  That is fine for the
+   * bake, which only cares that they do not move *between* placements; the
+   * per-frame work is a couple of Euler components on a mesh nobody is
+   * shadow-casting from. */
+  const crows = [];
   spots.forEach((spot, i) => {
     const crow = makeCrow({
-      x: spot.x, y: spot.y, z: spot.z, ry: spot.yaw, scale: 1.15 - (i % 2) * 0.12,
+      x: spot.x, y: spot.y, z: spot.z, ry: spot.yaw, scale: 1.05 - (i % 2) * 0.1,
     });
+    crows.push(crow);
     group.add(crow);
   });
 
   ctx.add(group);
+  /* A per-bird phase, so four crows on one street are four birds rather than
+   * one animation played four times. */
+  ctx.update((dt) => {
+    for (let i = 0; i < crows.length; i++) {
+      crows[i].userData.tick?.(dt, i * 1.7);
+    }
+  });
   return group;
 }
 
