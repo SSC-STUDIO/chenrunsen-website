@@ -330,7 +330,6 @@ export function buildWorld(scene) {
     buildDetails(ctx),
   ];
   buildJayTheme(ctx);
-  buildSkyBirds(ctx);
   /* The five screens run after every district for the same reason the theme
    * props do -- they hang on walls those districts built -- and before the
    * bake, which re-seats each `planetRigid` group onto the surface. */
@@ -599,6 +598,12 @@ export function buildWorld(scene) {
     }
     makeWires(ctx, runs);
   }
+
+  /* The perched crows land on those cables, so they go in here, after the run
+   * above has been laid and the poles' resolved heights exist -- `poles` is a
+   * `const` declared further up but populated by this point, and calling this
+   * from the district block would hit the temporal dead zone. */
+  buildSkyBirds(ctx, poles);
 
   /* ------------------------- the crossing corner cluster ------------------------- */
   const walkY = (z) => groundY(z) + WALK_H;
