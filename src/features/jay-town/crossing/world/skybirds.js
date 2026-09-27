@@ -18,8 +18,9 @@ import { makeCrow, birdSplitGeo } from './props.js';
  *
  *  - **the bake owned the crow.**  See `buildSkyBirds`: without
  *    `userData.planetRigid` the crow's meshes are bent into root space and its
- *    transforms are reset, so `tick` was rotating a bird-shaped cloud of
- *    world-space geometry about the origin of the world.
+ *    transforms are reset, so the idle that used to live in `makeCrow` was
+ *    rotating a bird-shaped cloud of world-space geometry about the origin of
+ *    the world, several metres away from the bird.
  *  - **the perch was not on the wire.**  See `perchOnWire`: the first version
  *    measured a straight line from the first pole of a run to the last, and
  *    the cables do not go that way.
