@@ -59,6 +59,7 @@ import { buildTraffic } from './traffic.js';
 import { buildDetails } from './details.js';
 import { buildSkyBirds } from './skybirds.js';
 import { buildJayTheme } from './jaytheme.js';
+import { buildJayScreens } from './jayscreen.js';
 import {
   makePole, makeWires, makeKeiTruck, makeBicycle, makeMirror, makePostBox,
   makeShrine, makeCat, makeCone, makeBarrier, makeGuardrail, makePlanter,
@@ -330,6 +331,10 @@ export function buildWorld(scene) {
   ];
   buildJayTheme(ctx);
   buildSkyBirds(ctx);
+  /* The five screens run after every district for the same reason the theme
+   * props do -- they hang on walls those districts built -- and before the
+   * bake, which re-seats each `planetRigid` group onto the surface. */
+  buildJayScreens(ctx);
   for (const d of districts) if (d.update) ctx.update(d.update);
   const extraSakura = districts.flatMap((d) => d.sakura ?? []);
   const extraShrubs = districts.flatMap((d) => d.shrubs ?? []);

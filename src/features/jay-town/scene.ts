@@ -12,11 +12,17 @@ import { setOutlineResolution } from './crossing/core/outline.js'
 import { Player } from './crossing/core/player.js'
 import { buildWorld } from './crossing/world/index.js'
 import { createEbike } from './crossing/world/ebike.js'
+import { screenRegistry, setScreenNight } from './crossing/world/jayscreen.js'
+import { ScreenHub, type ScreenInfo, type HubSong } from './screens/screen-hub'
 
 type Options = {
   onReady?: () => void
   onError?: () => void
   onZoneChange?: (index: number) => void
+  /** Fired when the in-world screens are attached and ready to be driven. */
+  onScreensReady?: (hub: ScreenHub) => void
+  /** Fired every frame with the per-screen state, for the page's compass. */
+  onScreenInfo?: (info: ScreenInfo[]) => void
 }
 
 export type TownSceneHandle = {
@@ -24,6 +30,11 @@ export type TownSceneHandle = {
   setNight(value: boolean): void
   setMove(x: number, z: number): void
   setPaused(value: boolean): void
+  /* The in-world screens.  `setSong` picks what every screen is showing;
+   * `focus` wakes one by hand, which is what the drawer's play buttons do. */
+  screens: ScreenHub | null
+  setSong(song: HubSong | null): void
+  focusScreen(zone: number): void
   dispose(): void
 }
 
@@ -67,7 +78,10 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     })
   } catch {
     options.onError?.()
-    return { goTo() {}, setNight() {}, setMove() {}, setPaused() {}, dispose() {} }
+    return {
+      goTo() {}, setNight() {}, setMove() {}, setPaused() {},
+      screens: null, setSong() {}, focusScreen() {}, dispose() {},
+    }
   }
 
   renderer.setPixelRatio(lite ? 1 : Math.min(window.devicePixelRatio || 1, 1.25))
@@ -138,8 +152,22 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     console.error('Unable to mount Sakura Crossing town', error)
     renderer.dispose()
     options.onError?.()
-    return { goTo() {}, setNight() {}, setMove() {}, setPaused() {}, dispose() {} }
+    return {
+      goTo() {}, setNight() {}, setMove() {}, setPaused() {},
+      screens: null, setSong() {}, focusScreen() {}, dispose() {},
+    }
   }
+
+  /* The in-world screens.  The hub owns its own overlay layer, created here
+   * rather than in the page markup: the projection is only correct inside the
+   * canvas's own viewport-sized box, and tying the two together in one place
+   * is what stops them drifting apart. */
+  const screenHost = document.createElement('div')
+  screenHost.className = 'screen-layer'
+  canvas.parentElement?.appendChild(screenHost)
+  const screens = new ScreenHub(screenHost)
+  screens.onInfo = (info) => options.onScreenInfo?.(info)
+  for (const [zone, group] of screenRegistry()) screens.attach(zone, group)
 
   player.onInteract = (target) => {
     if (ebike?.riding) { ebike.dismount(); return }
@@ -305,6 +333,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     hemi.groundColor.copy(day.hemiGround).lerp(night.hemiGround, t)
     if (scene.fog instanceof THREE.Fog) scene.fog.color.copy(day.fog).lerp(night.fog, t)
     sky.setNight(t)
+    setScreenNight(t)
   }
 
   function tick() {
@@ -352,6 +381,20 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     void hovered
 
     pipeline.render()
+
+    /* After the colour pass on purpose: the screens' occlusion mask needs the
+     * depth the render just produced, and the mask is a single quad over a
+     * few hundred pixels rather than anything that belongs in the scene. */
+    screens.update({
+      renderer,
+      camera,
+      depthTexture: pipeline.rtScene.depthTexture,
+      sceneWidth: pipeline.size.x,
+      sceneHeight: pipeline.size.y,
+      flatX: player.pos.x,
+      flatZ: player.pos.z,
+    }, dt)
+
     frame = requestAnimationFrame(tick)
   }
 
@@ -379,6 +422,8 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
       }
     })
     sun.shadow.dispose()
+    screens.dispose()
+    screenHost.remove()
     renderer.dispose()
   }
 
@@ -395,10 +440,18 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   resize()
   updateZoneFromPos()
   options.onReady?.()
+  options.onScreensReady?.(screens)
+  /* Dev handle.  The screens are the one part of this page whose correctness
+   * cannot be read off the DOM, so the harness in `scripts/verify-jay-town.mjs`
+   * needs a way in; it is inert in production. */
+  ;(window as unknown as { __jayTown?: unknown }).__jayTown = { scene, screens, player, world, camera, renderer, pipeline }
   frame = requestAnimationFrame(tick)
 
   return {
     goTo,
+    screens,
+    setSong(song) { screens.setSong(song) },
+    focusScreen(zone) { screens.focus(zone) },
     setNight(value) { nightTarget = value ? 1 : 0 },
     setMove(x, z) {
       // Page pad: z=-1 forward, x=+1 right → player fwd/side
