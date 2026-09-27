@@ -51,7 +51,26 @@ export type PortalSource = {
   youtubeEmbedUrl: string
   sourceUrl: string
   sourceLabel: string
+  /**
+   * A media file served from this site, played in a plain `<video>` instead of
+   * an embed.
+   *
+   * **This is not how the current songs work, and it is not a way to get other
+   * people's videos.**  Every entry in `songs.ts` embeds a player owned by the
+   * platform that hosts it; the site links to the recordings and never serves
+   * them.  A `localVideo` is for footage the site actually holds the rights to
+   * -- its own recordings, or material released for reuse -- and when one is
+   * set it is strictly better than an embed: no third-party script, no player
+   * chrome over the scene, no network round trip, and it starts on the frame.
+   *
+   * Nothing ships with one set.
+   */
+  localVideo?: string
+  /** Caption for a locally played file, instead of the embed's own credits. */
+  localNote?: string
 }
+
+export type PortalMedia = HTMLIFrameElement | HTMLVideoElement
 
 export class MediaPortal {
   readonly spec: ScreenSpec
@@ -60,7 +79,7 @@ export class MediaPortal {
   private veil: HTMLDivElement
   private stage: HTMLDivElement
   private badge: HTMLSpanElement
-  private frame: HTMLIFrameElement | null = null
+  private frame: PortalMedia | null = null
   private onState: ((state: PortalState) => void) | undefined
 
   private state: PortalState = 'unloaded'
@@ -152,8 +171,17 @@ export class MediaPortal {
   }
 
   private mount(source: PortalSource, platform: 'bilibili' | 'youtube'): void {
+    /* A file this site serves beats an embed on every axis: no third-party
+     * script, no player chrome sitting over the scene, no network round trip,
+     * and it can start on the frame.  Used when -- and only when -- the song
+     * carries one. */
+    if (source.localVideo) {
+      this.mountLocal(source)
+      return
+    }
+
     const url = platform === 'youtube' ? source.youtubeEmbedUrl : source.embedUrl
-    if (this.frame?.dataset.src === url) return
+    if (this.frame?.dataset.src === url && this.frame instanceof HTMLIFrameElement) return
 
     const next = document.createElement('iframe')
     next.className = 'media-portal__frame'
@@ -169,19 +197,60 @@ export class MediaPortal {
     this.stage.replaceChildren(next)
   }
 
-  /** Wake the screen up: this is the only path that creates an iframe. */
+  /**
+   * Play a file we hold, with `<video>`.
+   *
+   * Muted on the way in and unmuted once it is playing, for the same reason an
+   * embed is: a browser will not start audible playback without a gesture, and
+   * standing in front of a screen is not one.
+   */
+  private mountLocal(source: PortalSource): void {
+    if (this.frame?.dataset.src === source.localVideo && this.frame instanceof HTMLVideoElement) {
+      this.frame.play().catch(() => { /* the viewer can press play */ })
+      return
+    }
+
+    const video = document.createElement('video')
+    video.className = 'media-portal__frame'
+    video.dataset.src = source.localVideo
+    video.src = source.localVideo
+    video.title = `《${source.title}》 · ${source.localNote ?? '本地影像'}`
+    video.muted = true
+    video.loop = true
+    video.playsInline = true
+    video.preload = 'auto'
+    video.disablePictureInPicture = true
+    video.addEventListener('canplay', () => {
+      video.play().then(() => { video.muted = false }).catch(() => { /* needs a gesture */ })
+    }, { once: true })
+
+    this.frame?.remove()
+    this.frame = video
+    this.stage.replaceChildren(video)
+  }
+
+  /** Wake the screen up: this is the only path that creates media. */
   arm(source: PortalSource, platform: 'bilibili' | 'youtube'): void {
     this.setState('armed')
     this.songId = ''
     this.mount(source, platform)
   }
 
-  /** Tear the iframe down, which is also how playback stops. */
+  /** Tear the media down, which is also how playback stops. */
   release(): void {
     if (this.frame) {
-      // Blanking first stops the player from finishing its request after the
-      // element is gone, which otherwise shows up as an aborted request.
-      this.frame.src = 'about:blank'
+      if (this.frame instanceof HTMLVideoElement) {
+        /* Stopping a file is different from blanking an embed: clearing `src`
+         * and calling `load()` is what actually releases the decoder and stops
+         * the request, and it is the only way a looping video stops looping. */
+        this.frame.pause()
+        this.frame.removeAttribute('src')
+        this.frame.load()
+      } else {
+        // Blanking first stops the player from finishing its request after the
+        // element is gone, which otherwise shows up as an aborted request.
+        this.frame.src = 'about:blank'
+      }
       this.frame.remove()
       this.frame = null
     }
