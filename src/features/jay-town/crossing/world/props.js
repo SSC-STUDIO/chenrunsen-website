@@ -1135,69 +1135,67 @@ export function makeLaundryPole(o = {}) {
 }
 
 /**
+ * Low-poly flying bird (bill toward local −Z to match Object3D.lookAt).
+ *
+ * Wings sit in one plane; body + keel give thickness so a glance from the
+ * street never collapses to a stick or slab.  Use an unlit `flat()` material
+ * in the sky — MeshToon against the dome reads as a black void.
+ */
+export function birdSilhouetteGeo(scale = 1) {
+  const s = scale;
+  return bake([
+    // body hull along −Z (flight)
+    { geometry: new THREE.BoxGeometry(0.08 * s, 0.055 * s, 0.28 * s),
+      matrix: trs(0, 0.02 * s, -0.02 * s) },
+    // wing sheet, one plane
+    { geometry: new THREE.BoxGeometry(0.58 * s, 0.028 * s, 0.18 * s),
+      matrix: trs(0, 0.035 * s, -0.04 * s) },
+    // dihedral tips (read as wings, not a plank)
+    { geometry: new THREE.BoxGeometry(0.16 * s, 0.022 * s, 0.1 * s),
+      matrix: trs(-0.28 * s, 0.05 * s, -0.02 * s, 0, 0, 0.35) },
+    { geometry: new THREE.BoxGeometry(0.16 * s, 0.022 * s, 0.1 * s),
+      matrix: trs(0.28 * s, 0.05 * s, -0.02 * s, 0, 0, -0.35) },
+    // bill toward −Z (Cone tip is +Y; +90° X maps +Y → −Z)
+    { geometry: new THREE.ConeGeometry(0.022 * s, 0.09 * s, 5),
+      matrix: trs(0, 0.02 * s, -0.2 * s, Math.PI / 2, 0, 0) },
+    // forked tail toward +Z
+    { geometry: new THREE.BoxGeometry(0.1 * s, 0.02 * s, 0.12 * s),
+      matrix: trs(0, 0.03 * s, 0.16 * s) },
+    { geometry: new THREE.BoxGeometry(0.04 * s, 0.016 * s, 0.08 * s),
+      matrix: trs(-0.05 * s, 0.03 * s, 0.22 * s, 0, 0.25, 0) },
+    { geometry: new THREE.BoxGeometry(0.04 * s, 0.016 * s, 0.08 * s),
+      matrix: trs(0.05 * s, 0.03 * s, 0.22 * s, 0, -0.25, 0) },
+  ]);
+}
+
+/**
  * A crow on a wire.
  *
- * This was a 0.15 m sphere with a 0.045 m head, and at the eight to twenty
- * metres you actually see it from that is not a bird -- it is a black dot.  Up
- * on the wires over the crossing there were three of them in a row, and what
- * they read as was three unexplained black circles hanging above the train.
- *
- * A crow is legible at distance from exactly two things: the long wedge tail
- * held up off the wire, and the beak sticking forward of a flat head.  So the
- * body is longer and lower, the tail is a third of the whole length, and the
- * top surface is a shade lighter than the underside so the silhouette has a
- * spine rather than being one flat blob.  Half again the old size, which at
- * 0.34 m nose to tail is a real crow rather than a large one.
+ * Earlier sphere/box builds read as black slabs or sticks against the sky.
+ * Same low-poly bird as the flock, unlit so it stays a readable silhouette.
  */
 export function makeCrow(o = {}) {
   const g = new THREE.Group();
-  const dark = cel({ color: 0x33303e, bands: 2, tint: 0x413c58 });
-  const back = cel({ color: 0x4a4557, bands: 2, tint: 0x453f5c });
-  const beakMat = cel({ color: 0x5e5768, bands: 2, tint: 0x453f5c });
+  const dark = flat({
+    color: 0x4a4658,
+    side: THREE.DoubleSide,
+  });
+  const beakMat = flat({ color: 0x6a6478 });
+  const sc = o.scale ?? 1.2;
 
-  // body: long and low, tapering back into the tail
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.075, 9, 7), dark);
-  body.scale.set(0.85, 0.82, 1.75);
-  body.position.set(0, 0.095, 0.01);
+  const body = new THREE.Mesh(birdSilhouetteGeo(sc), dark);
+  // Perched: yaw faces along the wire; lift slightly and pitch so the profile
+  // reads from the street (not edge-on into the sky).
+  body.rotation.x = -0.15;
+  body.position.y = 0.08;
+  body.castShadow = true;
+  body.userData.noOutline = true;
   g.add(body);
-  // the lighter line along the back, which is what gives it a spine
-  const spine = new THREE.Mesh(new THREE.SphereGeometry(0.062, 9, 6), back);
-  spine.scale.set(0.66, 0.5, 1.55);
-  spine.position.set(0, 0.135, 0.0);
-  g.add(spine);
 
-  // head, set forward and slightly down, with the beak clear of it
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.052, 9, 7), dark);
-  head.scale.set(0.9, 0.85, 1.05);
-  head.position.set(0, 0.165, 0.115);
-  g.add(head);
-  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.019, 0.085, 5), beakMat);
-  beak.rotation.x = Math.PI / 2;
-  beak.position.set(0, 0.158, 0.20);
-  g.add(beak);
+  for (const s of [-1, 1]) {
+    g.add(cyl(0.006, 0.006, 0.05, 4, beakMat, s * 0.022, 0.025, 0.02));
+  }
 
-  /* Tail: a flat wedge, a third of the length, angled up off the wire.  This is
-   * the single most recognisable part of a perched crow at distance. */
-  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.016, 0.2), dark);
-  tail.position.set(0, 0.115, -0.185);
-  tail.rotation.x = -0.42;
-  g.add(tail);
-  const tailTip = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.014, 0.075), back);
-  tailTip.position.set(0, 0.155, -0.275);
-  tailTip.rotation.x = -0.42;
-  g.add(tailTip);
-  // a folded wing on each flank, so the body is not a smooth ellipsoid
-  for (const s of [-1, 1]) {
-    const wing = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.055, 0.17), dark);
-    wing.position.set(s * 0.056, 0.1, -0.02);
-    wing.rotation.x = -0.12;
-    g.add(wing);
-  }
-  // feet, gripping the wire
-  for (const s of [-1, 1]) {
-    g.add(cyl(0.008, 0.008, 0.055, 4, beakMat, s * 0.026, 0.028, 0.03));
-  }
-  g.traverse((n) => { if (n.isMesh) n.castShadow = true; });
   g.position.set(o.x, o.y ?? 0, o.z);
   g.rotation.y = o.ry ?? 0;
   return g;

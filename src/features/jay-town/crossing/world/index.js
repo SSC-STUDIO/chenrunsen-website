@@ -57,6 +57,8 @@ import { buildRokuchome } from './rokuchome.js';
 import { buildNanachome } from './nanachome.js';
 import { buildTraffic } from './traffic.js';
 import { buildDetails } from './details.js';
+import { buildSkyBirds } from './skybirds.js';
+import { buildJayTheme } from './jaytheme.js';
 import {
   makePole, makeWires, makeKeiTruck, makeBicycle, makeMirror, makePostBox,
   makeShrine, makeCat, makeCone, makeBarrier, makeGuardrail, makePlanter,
@@ -326,6 +328,8 @@ export function buildWorld(scene) {
     buildTraffic(ctx),
     buildDetails(ctx),
   ];
+  buildJayTheme(ctx);
+  buildSkyBirds(ctx);
   for (const d of districts) if (d.update) ctx.update(d.update);
   const extraSakura = districts.flatMap((d) => d.sakura ?? []);
   const extraShrubs = districts.flatMap((d) => d.shrubs ?? []);
