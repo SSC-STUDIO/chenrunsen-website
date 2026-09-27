@@ -1,28 +1,62 @@
 import * as THREE from 'three';
 import { PAL } from '../core/palette.js';
 import { cel, flat } from '../core/toon.js';
+import { petalTex } from '../core/textures.js';
 import { bake, trs, rngKit } from '../core/util.js';
+import { buildFallenPatches } from './petals.js';
 
 /* ------------------------------------------------------------------ *
  * Cherry trees.
  *
  * Trunks and branches are merged into a single mesh; the canopy is three
- * instanced meshes, one per blossom tone.  Clusters of faceted blobs read
- * as painted blossom mass far better than any leaf geometry would, and
- * three tones give the canopy internal shape without any texture.
+ * instanced meshes, one per blossom tone, plus a thin spray of loose petal
+ * cards.  Crowns are built as *clusters at branch tips* with deliberate
+ * gaps between limbs -- not one solid pink ball -- so forks stay readable
+ * and the silhouette reads as anime sakura rather than a painted sphere.
  * ------------------------------------------------------------------ */
 
 const BLOB_TONES = [PAL.blossomLight, PAL.blossom, PAL.blossomDeep];
 
+/** Match scene.ts lite: coarse pointer or narrow viewport → thinner canopy. */
+function sakuraLite() {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 700;
+}
+
+/** Place a wood segment from `a` toward `b`. `geo` already tapers; scales set girth. */
+function woodSeg(parts, geo, a, b, rButt, rTip) {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const len = dir.length();
+  if (len < 1e-4) return;
+  const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+  const q = new THREE.Quaternion().setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0), dir.normalize());
+  /* Non-uniform xz scale exaggerates the baked cylinder taper so forks thin
+   * visibly toward the tip instead of reading as even pipes. */
+  parts.push({
+    geometry: geo,
+    matrix: new THREE.Matrix4().compose(
+      mid, q, new THREE.Vector3(rButt, len, Math.max(0.04, rTip))),
+  });
+}
+
 /**
- * @param spots [{ x, z, y, scale, seed, lean, tone }]
+ * @param spots [{ x, z, y, scale, seed, lean, tone, carpet }]
  */
 export function buildSakura(ctx, spots) {
   const woodParts = [];
   const blobs = [[], [], []];
-  const trunkGeo = new THREE.CylinderGeometry(0.7, 1.0, 1, 7, 1);
-  const branchGeo = new THREE.CylinderGeometry(0.25, 0.55, 1, 5, 1);
-  const twigGeo = new THREE.CylinderGeometry(0.12, 0.3, 1, 4, 1);
+  const loose = [];
+  const carpets = [];
+  const lite = sakuraLite();
+  const dens = lite ? 0.55 : 1;
+
+  const trunkGeo = new THREE.CylinderGeometry(0.72, 1.0, 1, 7, 1);
+  const branchGeo = new THREE.CylinderGeometry(0.22, 0.55, 1, 5, 1);
+  const twigGeo = new THREE.CylinderGeometry(0.1, 0.28, 1, 4, 1);
+  const tipGeo = new THREE.CylinderGeometry(0.06, 0.16, 1, 4, 1);
+
+  let carpetBudget = lite ? 3 : 6;
 
   for (const spot of spots) {
     const rng = rngKit(spot.seed ?? 1);
@@ -33,7 +67,7 @@ export function buildSakura(ctx, spots) {
     const lean = spot.lean ?? 0;
     const leanDir = spot.leanDir ?? rng.range(0, Math.PI * 2);
 
-    const trunkH = 2.5 * S * rng.range(0.9, 1.12);
+    const trunkH = 2.55 * S * rng.range(0.9, 1.12);
     const trunkR = 0.2 * S;
     woodParts.push({
       geometry: trunkGeo,
@@ -43,102 +77,169 @@ export function buildSakura(ctx, spots) {
     // root flare
     woodParts.push({
       geometry: trunkGeo,
-      matrix: trs(x, y + 0.16 * S, z, 0, 0, 0, trunkR * 1.5, 0.34 * S, trunkR * 1.5),
+      matrix: trs(x, y + 0.16 * S, z, 0, 0, 0, trunkR * 1.55, 0.34 * S, trunkR * 1.55),
     });
 
     /* Where the trunk actually ends.
      *
      * The trunk is a cylinder rotated about its own *centre* by the Euler
      * (lean·sin d, 0, -lean·cos d) above, so its tip is the centre plus that
-     * rotation applied to (0, trunkH/2, 0) -- and the small-angle form of that
-     * is (h·lean·cos d, h, h·lean·sin d), not (0.9·trunkH·lean·sin d, …,
-     * -0.9·trunkH·lean·cos d).  The old expression had sin and cos swapped and
-     * used 0.9·trunkH where the half-height belongs, so the limbs and the whole
-     * blossom mass were planted about 0.4 m away from a trunk top 0.17 m
-     * across, at ninety degrees to the lean.  Every tree in the world was
-     * detached from its own canopy, in a different direction each time.
-     *
-     * Applied exactly rather than approximated, so it stays right if anything
-     * ever leans hard. */
+     * rotation applied to (0, trunkH/2, 0).  Applied exactly rather than
+     * approximated, so it stays right if anything ever leans hard. */
     const tip = new THREE.Vector3(0, trunkH / 2, 0)
       .applyEuler(new THREE.Euler(lean * Math.sin(leanDir), 0, -lean * Math.cos(leanDir)));
-    const topX = x + tip.x;
-    const topZ = z + tip.z;
-    const topY = y + trunkH / 2 + tip.y;
+    const top = new THREE.Vector3(x + tip.x, y + trunkH / 2 + tip.y, z + tip.z);
 
-    // main limbs
-    const limbs = 3 + Math.floor(rng.next() * 2);
+    /* Branch scaffold: 4–6 main limbs, each with a fork and often a twig, so
+     * the wood silhouette stays readable through the blossom.  Canopy anchors
+     * live only at tips (and a few mid-forks), which leaves gaps between
+     * limb clusters instead of filling a sphere. */
+    const limbs = 4 + Math.floor(rng.next() * 3);
     const canopyCenters = [];
-    for (let i = 0; i < limbs; i++) {
-      const a = (i / limbs) * Math.PI * 2 + rng.range(-0.4, 0.4);
-      const len = 1.9 * S * rng.range(0.82, 1.2);
-      const tilt = rng.range(0.5, 0.85);
-      const ex = topX + Math.cos(a) * Math.sin(tilt) * len;
-      const ez = topZ + Math.sin(a) * Math.sin(tilt) * len;
-      const ey = topY + Math.cos(tilt) * len;
-      const mid = new THREE.Vector3((topX + ex) / 2, (topY + ey) / 2, (topZ + ez) / 2);
-      const dir = new THREE.Vector3(ex - topX, ey - topY, ez - topZ);
-      const l = dir.length();
-      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
-      const m = new THREE.Matrix4().compose(mid, q, new THREE.Vector3(0.13 * S, l, 0.13 * S));
-      woodParts.push({ geometry: branchGeo, matrix: m });
-      canopyCenters.push(new THREE.Vector3(ex, ey, ez));
+    const pushTip = (p, weight = 1) => {
+      canopyCenters.push({ p: p.clone(), w: weight });
+    };
 
-      // one fork per limb
-      if (rng.next() < 0.75) {
-        const dir2 = dir.clone().normalize()
-          .add(new THREE.Vector3(rng.range(-0.7, 0.7), rng.range(0.1, 0.6), rng.range(-0.7, 0.7)))
+    for (let i = 0; i < limbs; i++) {
+      const a = (i / limbs) * Math.PI * 2 + rng.range(-0.45, 0.45);
+      const len = 1.95 * S * rng.range(0.72, 1.28);
+      /* Flatter tilt + uneven lengths open sky pockets between limbs so the
+       * crown is a ring of tip clusters, not a filled sphere. */
+      const tilt = rng.range(0.62, 1.05);
+      const end = new THREE.Vector3(
+        top.x + Math.cos(a) * Math.sin(tilt) * len,
+        top.y + Math.cos(tilt) * len,
+        top.z + Math.sin(a) * Math.sin(tilt) * len
+      );
+      const limbR0 = 0.14 * S * rng.range(0.9, 1.1);
+      woodSeg(woodParts, branchGeo, top, end, limbR0, limbR0 * 0.55);
+      pushTip(end, 1.15);
+
+      // primary fork (~every limb)
+      if (rng.next() < 0.88) {
+        const dir = new THREE.Vector3().subVectors(end, top).normalize();
+        const dir2 = dir.clone()
+          .add(new THREE.Vector3(rng.range(-0.85, 0.85), rng.range(0.05, 0.55), rng.range(-0.85, 0.85)))
           .normalize();
-        const l2 = len * rng.range(0.5, 0.8);
-        const e2 = new THREE.Vector3(ex, ey, ez).addScaledVector(dir2, l2);
-        const mid2 = new THREE.Vector3().addVectors(new THREE.Vector3(ex, ey, ez), e2).multiplyScalar(0.5);
-        const q2 = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir2);
-        woodParts.push({
-          geometry: twigGeo,
-          matrix: new THREE.Matrix4().compose(mid2, q2, new THREE.Vector3(0.09 * S, l2, 0.09 * S)),
-        });
-        canopyCenters.push(e2);
+        const l2 = len * rng.range(0.42, 0.72);
+        const e2 = end.clone().addScaledVector(dir2, l2);
+        woodSeg(woodParts, twigGeo, end, e2, limbR0 * 0.5, limbR0 * 0.28);
+        pushTip(e2, 1.0);
+
+        // tertiary tip twig — keeps wood visible through the blossom
+        if (rng.next() < 0.7) {
+          const dir3 = dir2.clone()
+            .add(new THREE.Vector3(rng.range(-0.9, 0.9), rng.range(-0.15, 0.45), rng.range(-0.9, 0.9)))
+            .normalize();
+          const l3 = l2 * rng.range(0.4, 0.7);
+          const e3 = e2.clone().addScaledVector(dir3, l3);
+          woodSeg(woodParts, tipGeo, e2, e3, limbR0 * 0.26, limbR0 * 0.12);
+          pushTip(e3, 0.85);
+        }
+      }
+
+      // second fork off the mid-limb on some trees (visible Y-split)
+      if (rng.next() < 0.55) {
+        const midPt = new THREE.Vector3().lerpVectors(top, end, rng.range(0.45, 0.7));
+        const side = new THREE.Vector3(
+          rng.range(-1, 1), rng.range(0.2, 0.8), rng.range(-1, 1)
+        ).normalize();
+        const lSide = len * rng.range(0.32, 0.55);
+        const eSide = midPt.clone().addScaledVector(side, lSide);
+        woodSeg(woodParts, twigGeo, midPt, eSide, limbR0 * 0.42, limbR0 * 0.2);
+        pushTip(eSide, 0.75);
       }
     }
 
-    /* Blossom mass: many small blobs rather than a few big ones.  Large
-     * spheres read as boulders; a dense cluster of small faceted lumps
-     * reads as painted blossom.  Tone is biased by height so the top of
-     * the canopy catches the light and the underside stays deeper. */
-    const count = 26 + Math.floor(rng.next() * 10);
+    /* Blossom: many small clumps anchored at tips, not one uniform cloud.
+     * Spread is tight around each tip so neighbouring limbs leave sky gaps;
+     * size varies so the mass has thickness without reading as boulders. */
+    const baseCount = Math.round((52 + Math.floor(rng.next() * 18)) * dens);
     let yMin = Infinity, yMax = -Infinity;
     for (const c of canopyCenters) {
-      yMin = Math.min(yMin, c.y);
-      yMax = Math.max(yMax, c.y);
+      yMin = Math.min(yMin, c.p.y);
+      yMax = Math.max(yMax, c.p.y);
     }
-    for (let i = 0; i < count; i++) {
-      const c = canopyCenters[Math.floor(rng.next() * canopyCenters.length)];
-      const r = 0.56 * S * rng.range(0.68, 1.3);
-      const px = c.x + rng.range(-1.15, 1.15) * S;
-      const py = c.y + rng.range(-0.55, 0.95) * S;
-      const pz = c.z + rng.range(-1.15, 1.15) * S;
+    const ySpan = Math.max(0.5, yMax + 0.9 * S - yMin);
+
+    const pickCenter = () => {
+      // weight toward tips so mid-limb air stays emptier
+      let t = rng.next() * canopyCenters.reduce((s, c) => s + c.w, 0);
+      for (const c of canopyCenters) {
+        t -= c.w;
+        if (t <= 0) return c.p;
+      }
+      return canopyCenters[canopyCenters.length - 1].p;
+    };
+
+    for (let i = 0; i < baseCount; i++) {
+      const c = pickCenter();
+      /* Three size bands: a few soft cores, many mid clumps, fine edge puffs.
+       * Earlier 0.5–0.6·S lumps still read as painted balloons once they
+       * overlapped; keeping most under ~0.28·S is what breaks the sphere. */
+      const roll = rng.next();
+      const band = roll < 0.18 ? 'core' : roll < 0.62 ? 'mid' : 'edge';
+      const r = (band === 'core' ? 0.30 : band === 'mid' ? 0.20 : 0.12) * S * rng.range(0.75, 1.15);
+      const spread = band === 'core' ? 0.42 : band === 'mid' ? 0.55 : 0.68;
+      const px = c.x + rng.range(-spread, spread) * S;
+      const py = c.y + rng.range(-0.28, 0.42) * S;
+      const pz = c.z + rng.range(-spread, spread) * S;
       let tone;
       if (spot.tone !== undefined) tone = spot.tone;
       else {
-        const hi = (py - yMin) / Math.max(0.5, yMax + 1.2 * S - yMin);
-        tone = hi > 0.62 ? 0 : hi < 0.28 ? 2 : 1;
-        if (rng.next() < 0.22) tone = (tone + 1) % 3;
+        const hi = (py - yMin) / ySpan;
+        // lighter on outer/high edges
+        const radial = Math.hypot(px - top.x, pz - top.z) / Math.max(0.8, 2.2 * S);
+        tone = (hi > 0.55 || radial > 0.7 || band === 'edge') ? 0 : hi < 0.26 ? 2 : 1;
+        if (rng.next() < 0.16) tone = (tone + 1) % 3;
       }
       blobs[tone].push(trs(px, py, pz,
         rng.range(0, 3), rng.range(0, 3), rng.range(0, 3),
-        r, r * rng.range(0.68, 0.88), r));
+        r * rng.range(0.85, 1.2),
+        r * rng.range(0.48, 0.78),
+        r * rng.range(0.8, 1.15)));
     }
 
-    // a small cluster crowning the silhouette
-    for (let i = 0; i < 4; i++) {
-      const r = 0.6 * S * rng.range(0.8, 1.15);
+    // airy highlight flecks on the lit rim (keep the crown from reading as rock)
+    const flecks = Math.round((12 + Math.floor(rng.next() * 6)) * dens);
+    for (let i = 0; i < flecks; i++) {
+      const c = pickCenter();
+      const r = 0.1 * S * rng.range(0.7, 1.15);
       blobs[0].push(trs(
-        topX + rng.range(-0.7, 0.7) * S,
-        topY + (1.25 + rng.range(0, 0.5)) * S,
-        topZ + rng.range(-0.7, 0.7) * S,
+        c.x + rng.range(-0.85, 0.85) * S,
+        c.y + rng.range(0.05, 0.55) * S,
+        c.z + rng.range(-0.85, 0.85) * S,
         rng.range(0, 3), rng.range(0, 3), rng.range(0, 3),
-        r, r * 0.8, r
+        r, r * 0.45, r
       ));
+    }
+
+    // a few loose petal cards near tips (not solid mass)
+    const petalN = Math.round((7 + Math.floor(rng.next() * 5)) * dens);
+    for (let i = 0; i < petalN; i++) {
+      const c = pickCenter();
+      loose.push(trs(
+        c.x + rng.range(-0.85, 0.85) * S,
+        c.y + rng.range(-0.55, 0.4) * S,
+        c.z + rng.range(-0.85, 0.85) * S,
+        rng.range(-0.7, 0.7), rng.range(0, 6.28), rng.range(-0.9, 0.9),
+        0.18 * S * rng.range(0.7, 1.25),
+        0.13 * S * rng.range(0.7, 1.2),
+        1
+      ));
+    }
+
+    /* Soft petal carpet under a few hero trees only — opening / large verge
+     * cherries, never the whole road. */
+    const wantCarpet = spot.carpet === true
+      || (carpetBudget > 0 && S >= 1.14 && Math.abs(x) < 22 && z > -2 && z < 28 && spot.collide !== false);
+    if (wantCarpet) {
+      carpetBudget -= 1;
+      carpets.push({
+        x, z, y,
+        w: 1.6 * S, d: 1.5 * S,
+        n: Math.round((70 + Math.floor(rng.next() * 40)) * dens),
+      });
     }
 
     /* 1.15 rather than 1.6: the collider was half a metre wider than the trunk
@@ -170,24 +271,39 @@ export function buildSakura(ctx, spots) {
     );
     list.forEach((m, k) => inst.setMatrixAt(k, m));
     inst.castShadow = true;
-    /* Blossom does not *receive* shadow.
-     *
-     * The high-key ramp keeps the away-facing side of the canopy light, but a
-     * ramp only shapes *direct* light: once the shadow map zeroes the sun, the
-     * blob falls back to ambient and comes out as a dark violet lump.  A big
-     * cherry self-shadows heavily, so whole trees were going grey -- and an
-     * isolated dark blob against the sky reads as a rendering fault, not as
-     * shade.  Turning receive off makes the canopy behave the way blossom is
-     * actually painted: a flat high-key mass whose form comes from its three
-     * tones, lit the same wherever it stands.  It still casts, which is what
-     * dapples the ground underneath. */
+    /* Blossom does not *receive* shadow — see prior note: self-shadow zeroes
+     * the high-key ramp and turns whole trees into grey lumps. */
     inst.receiveShadow = false;
     inst.name = 'sakuraCanopy' + i;
     ctx.add(inst);
     canopies.push(inst);
   });
 
-  [trunkGeo, branchGeo, twigGeo].forEach((g) => g.dispose());
+  if (loose.length) {
+    const pGeo = new THREE.PlaneGeometry(1, 1);
+    const tex = petalTex();
+    // one draw call — fine tip detail, not a second canopy mass
+    const inst = new THREE.InstancedMesh(
+      pGeo,
+      flat({
+        color: PAL.petal, map: tex, transparent: true, opacity: 0.92,
+        depthWrite: false, side: THREE.DoubleSide, alphaTest: 0.32, cache: false,
+      }),
+      loose.length
+    );
+    loose.forEach((m, k) => inst.setMatrixAt(k, m));
+    inst.castShadow = false;
+    inst.receiveShadow = false;
+    inst.renderOrder = 3;
+    inst.userData.noOutline = true;
+    inst.name = 'sakuraLoosePetals';
+    ctx.add(inst);
+    canopies.push(inst);
+  }
+
+  if (carpets.length) buildFallenPatches(ctx, carpets);
+
+  [trunkGeo, branchGeo, twigGeo, tipGeo].forEach((g) => g.dispose());
   return { wood, canopies };
 }
 
