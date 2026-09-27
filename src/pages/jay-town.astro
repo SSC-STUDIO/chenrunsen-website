@@ -81,17 +81,10 @@ const stops = [
         ))}
       </nav>
 
-      <div class="player-bar" role="group" aria-label="歌曲播放器">
-        <button class="player-bar__record" id="song-drawer-open" type="button" aria-label="打开歌单" title="打开歌单" aria-controls="song-drawer" aria-expanded="false"><span aria-hidden="true">♫</span></button>
-        <div class="player-bar__info" aria-live="polite" aria-atomic="true">
-          <strong id="current-song">{songs[0]?.title ?? '小镇歌单'}</strong>
-          <span id="current-status">未打开</span>
-        </div>
-        <button class="player-bar__control" id="previous-song" type="button" aria-label="上一首" title="上一首" disabled={songs.length === 0}><span aria-hidden="true">‹</span></button>
-        <button class="player-bar__control player-bar__control--primary" id="listen-song" type="button" aria-label="在世界里的屏幕上播放" title="在世界里的屏幕上播放" disabled={songs.length === 0}><span aria-hidden="true">▶</span></button>
-        <button class="player-bar__control" id="next-song" type="button" aria-label="下一首" title="下一首" disabled={songs.length === 0}><span aria-hidden="true">›</span></button>
-        <button class="player-bar__source" id="song-source" type="button" aria-label="切换 MV 来源" title="切换 MV 来源" disabled={songs.length === 0}><span id="song-source-label">B站</span></button>
-      </div>
+      <button class="drawer-handle" id="song-drawer-open" type="button" aria-label="打开歌单" title="打开歌单" aria-controls="song-drawer" aria-expanded="false">
+        <span class="drawer-handle__bar" aria-hidden="true"></span>
+        <span class="drawer-handle__label">歌单 · <b>{songs.length}</b> 首</span>
+      </button>
 
       <div class="move-pad" id="move-pad" role="group" aria-label="移动方向">
         <button class="move-pad__up" type="button" data-move-x="0" data-move-z="-1" aria-label="向前走" title="向前走">↑</button>
@@ -111,7 +104,9 @@ const stops = [
           <label class="zone-field"><span class="sr-only">按场景筛选歌曲</span><select id="song-zone-filter"><option value="all">全部场景</option>{stops.map((stop, index) => <option value={index}>{stop.name}</option>)}</select></label>
           <button class="favorites-filter" id="favorites-filter" type="button" aria-pressed="false" title="只看收藏">☆ <span>收藏</span></button>
         </div>
-        <p class="song-count" id="song-count">{songs.length} 首歌曲</p>
+        <p class="song-count" id="song-count">{songs.length} 首歌曲
+          <button class="source-toggle" id="song-source" type="button" title="切换 MV 来源" aria-label="切换 MV 来源"><span id="song-source-label">B站</span></button>
+        </p>
         <ol class="song-list" id="song-list">
           {songs.map((song, index) => (
             <li class="song-row" data-song-id={song.id}>
@@ -173,9 +168,6 @@ const stops = [
       const favoritesFilter = document.querySelector('#favorites-filter') as HTMLButtonElement
       const songCount = document.querySelector('#song-count') as HTMLElement
       const songEmpty = document.querySelector('#song-empty') as HTMLElement
-      const playerTitle = document.querySelector('#current-song') as HTMLElement
-      const playerStatus = document.querySelector('#current-status') as HTMLElement
-      const listenButton = document.querySelector('#listen-song') as HTMLButtonElement
       const rows = [...document.querySelectorAll<HTMLElement>('[data-song-id]')]
       const favoriteKey = 'jay-town:favorites:v1'
 
@@ -270,6 +262,10 @@ const stops = [
               requestAnimationFrame(() => {
                 town.classList.add('is-entering')
                 window.setTimeout(() => town.classList.remove('is-entering'), 2600)
+                /* Long enough for the dolly to land, short enough that the
+                 * screen comes on while the viewer is still taking the town in.
+                 * See the note on `autoPlayOnArrival`. */
+                window.setTimeout(autoPlayOnArrival, 2800)
               })
               sceneStatus.hidden = true
               sceneFailure.hidden = true
@@ -301,6 +297,30 @@ const stops = [
           where.textContent = `停在：${phases[phases.length - 1]}（第 ${phases.length} 步）`
           sceneFailure.appendChild(where)
         }
+      }
+
+      /* ---------------------------- playing on arrival ---------------------------
+       *
+       * Asked for twice: walk in and the song is already playing on the town's
+       * own screen, rather than waiting for a press.
+       *
+       * The delay is the trick and it is not cosmetic.  Browsers refuse audible
+       * playback without a gesture, so an embed starts *muted* and takes a
+       * second or two to boot; firing that at the same moment as the opening
+       * dolly would put a loading player in the middle of the one shot the page
+       * gets to make a first impression.  Waiting until the camera has settled
+       * means the town is revealed clean, and then a screen a few metres away
+       * lights up.
+       *
+       * It plays the song belonging to whichever stop the viewer is standing
+       * at, so the thing that comes on is the thing in front of them. */
+      function autoPlayOnArrival() {
+        if (!songs.length) return
+        /* Nothing to show it on means nothing to play: an audio-only start
+         * would be a song coming out of an empty street. */
+        if (!document.querySelector(`.media-portal[data-screen-zone="${currentZone}"]`)) return
+        const opening = songs.find((song) => song.zone === currentZone) ?? songs[0]
+        openSong(opening)
       }
 
       /* Let the loader be seen before the main thread is taken away. */
@@ -345,6 +365,7 @@ const stops = [
       function setDrawer(open: boolean) {
         drawer.hidden = !open
         drawerOpen.setAttribute('aria-expanded', String(open))
+        drawerOpen.classList.toggle('is-open', open)
         if (open) search.focus()
         else if (drawer.contains(document.activeElement)) drawerOpen.focus()
       }
@@ -352,13 +373,10 @@ const stops = [
       drawerClose.addEventListener('click', () => setDrawer(false))
       ;(document.querySelector('#failure-songs') as HTMLButtonElement).addEventListener('click', () => setDrawer(true))
 
+      /* The player bar is gone: it was the one piece of furniture laid over the
+       * scene that also *repeated* what the screen already shows.  What is left
+       * of its job is the drawer's own state and the row highlight. */
       function updatePlayer() {
-        const song = currentSong()
-        playerTitle.textContent = song?.title ?? '小镇歌单'
-        playerStatus.textContent = song && openSongId === song.id ? 'MV 已打开' : '选择一首，开始散步'
-        listenButton.firstElementChild!.textContent = song && openSongId === song.id ? '↗' : '▶'
-        listenButton.setAttribute('aria-label', song && openSongId === song.id ? '展开当前 MV 小窗' : song ? `打开《${song.title}》MV` : '打开当前歌曲')
-        listenButton.title = listenButton.getAttribute('aria-label') || ''
         rows.forEach((row) => row.classList.toggle('is-current', row.dataset.songId === currentSongId))
       }
 
@@ -410,15 +428,12 @@ const stops = [
         const index = Math.max(0, songs.findIndex((song) => song.id === currentSongId))
         openSong(songs[(index + direction + songs.length) % songs.length])
       }
-      listenButton.addEventListener('click', () => {
-        const song = currentSong()
-        if (song) openSong(song)
-      })
 
-      /* Bilibili's collection or YouTube's official upload.  The toggle is worth
-       * having because the two are not equivalent: the Bilibili collection is
-       * reachable from the mainland and the YouTube uploads are the ones the
-       * rights holder actually posted. */
+      /* Bilibili's collection or YouTube's official upload.  It lives in the
+       * drawer now, because the answer belongs to the song rather than to the
+       * moment -- and it is worth having at all because the two are not
+       * equivalent: the Bilibili collection is reachable from the mainland, the
+       * YouTube uploads are the ones the rights holder actually posted. */
       const sourceButton = document.querySelector('#song-source') as HTMLButtonElement
       const sourceLabel = document.querySelector('#song-source-label') as HTMLElement
       sourceButton.addEventListener('click', () => {
@@ -429,8 +444,6 @@ const stops = [
         sourceButton.title = text
         sourceButton.setAttribute('aria-label', text)
       })
-      ;(document.querySelector('#previous-song') as HTMLButtonElement).addEventListener('click', () => stepSong(-1))
-      ;(document.querySelector('#next-song') as HTMLButtonElement).addEventListener('click', () => stepSong(1))
 
       function syncFavorites() {
         rows.forEach((row) => {
@@ -661,7 +674,7 @@ const stops = [
   .hide-button { padding: 0 11px; font-size: 11px; }
   .home-link:hover, .tool-button:hover, .hide-button:hover { background: #1f5757cc; }
   .ui-restore { position: absolute; z-index: 30; right: max(20px, env(safe-area-inset-right)); top: max(20px, env(safe-area-inset-top)); padding: 9px 12px; border: 1px solid #f8f5ecb8; background: #173c3eaa; color: #fff; backdrop-filter: blur(8px); }
-  .ui-hidden .town-header, .ui-hidden .town-route, .ui-hidden .place-stamp, .ui-hidden .player-bar, .ui-hidden .move-pad, .ui-hidden .song-drawer, .ui-hidden .video-panel, .ui-hidden .scene-status, .ui-hidden .scene-failure { display: none !important; }
+  .ui-hidden .town-header, .ui-hidden .town-route, .ui-hidden .place-stamp, .ui-hidden .drawer-handle, .ui-hidden .move-pad, .ui-hidden .song-drawer, .ui-hidden .video-panel, .ui-hidden .scene-status, .ui-hidden .scene-failure { display: none !important; }
 
   /* ----------------------------- loading state -----------------------------
      The main thread is blocked for the whole world build, so *nothing* driven
@@ -729,19 +742,18 @@ const stops = [
   .town-route__stop:hover, .town-route__stop.is-active { color: #fff; }
   .town-route__stop.is-active .town-route__marker { background: #ed9caa; box-shadow: 0 0 0 4px #ed9caa45, 0 0 12px #fff; }
 
-  .player-bar { position: absolute; z-index: 6; left: max(25px, env(safe-area-inset-left)); bottom: max(28px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 5px; width: 279px; height: 58px; padding: 5px 6px; border: 1px solid #fffdf6bd; border-radius: 7px; background: #f8f5ecee; color: var(--ink); box-shadow: 0 7px 26px #153c3738; backdrop-filter: blur(12px); }
-  .player-bar__record { flex: none; display: grid; place-items: center; width: 43px; height: 43px; border: 0; border-radius: 50%; background: #285c56; color: #fff8ed; font-size: 22px; }
-  .player-bar__record:hover { background: #a64f64; }
-  .player-bar__info { min-width: 0; flex: 1; display: grid; gap: 3px; }
-  .player-bar__info strong { overflow: hidden; font: 600 12px/1.25 var(--serif); white-space: nowrap; text-overflow: ellipsis; }
-  .player-bar__info span { overflow: hidden; color: #5f7771; font-size: 10px; white-space: nowrap; text-overflow: ellipsis; }
-  .player-bar__control { flex: none; width: 24px; height: 30px; padding: 0; border: 0; background: none; color: var(--teal); font-size: 22px; line-height: 1; }
-  .player-bar__control--primary { font-size: 13px; }
-  .player-bar__control:not(:disabled):hover { color: var(--pink-deep); }
-  /* The MV source toggle: smaller and quieter than the transport, because it is
-     a preference rather than something you press every song. */
-  .player-bar__source { flex: none; width: auto; min-width: 34px; height: 22px; padding: 0 5px; border: 1px solid #c9d4cb; background: #fffefa; color: #4c7067; font-size: 9px; line-height: 1; letter-spacing: .02em; }
-  .player-bar__source:not(:disabled):hover { border-color: var(--pink-deep); color: var(--pink-deep); }
+  /* The song-list handle.  The player bar is gone: it was the one piece of
+     furniture laid over the scene that also *repeated* what the screen already
+     shows -- the song title, the transport, the credits -- and with the MV now
+     starting on its own there was nothing left for it to do that the town was
+     not already doing.  This is all that survives, and it earns its place by
+     being a way *in* to the list rather than a readout of it. */
+  .drawer-handle { position: absolute; z-index: 6; left: max(25px, env(safe-area-inset-left)); bottom: max(28px, env(safe-area-inset-bottom)); display: grid; gap: 4px; justify-items: center; padding: 7px 13px 6px; border: 1px solid #fffdf6c4; border-radius: 8px; background: #f8f5ece8; color: var(--ink); box-shadow: 0 6px 20px #153c372e; backdrop-filter: blur(12px); }
+  .drawer-handle__bar { width: 22px; height: 2px; border-radius: 2px; background: #9db0a7; }
+  .drawer-handle__label { color: #4c7067; font-size: 10px; letter-spacing: .04em; white-space: nowrap; }
+  .drawer-handle__label b { color: var(--teal); font-weight: 700; }
+  .drawer-handle:hover, .drawer-handle.is-open { background: #fffdf6; border-color: var(--pink); }
+  .drawer-handle:hover .drawer-handle__bar, .drawer-handle.is-open .drawer-handle__bar { background: var(--pink-deep); }
 
   .move-pad { display: none; }
 
@@ -759,11 +771,15 @@ const stops = [
   .zone-field select { width: 100%; height: 100%; padding: 0 4px; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 11px; }
   .favorites-filter { padding: 0 5px; border: 1px solid #cad8cf; background: #fffefa; color: #586d64; font-size: 11px; white-space: nowrap; }
   .favorites-filter.is-active { border-color: #c6687a; background: #fcecf0; color: #a14a60; }
-  .song-count { margin: 12px 19px 7px; color: #70817a; font-size: 10px; }
+  .song-count { display: flex; align-items: center; justify-content: space-between; margin: 12px 19px 7px; color: #70817a; font-size: 10px; }
+  /* The source toggle belongs to the song, not to the moment, so it sits with
+     the list rather than over the scene. */
+  .source-toggle { padding: 1px 7px; border: 1px solid #cad8cf; background: #fffefa; color: #4c7067; font-size: 9px; line-height: 1.7; letter-spacing: .02em; }
+  .source-toggle:hover { border-color: var(--pink-deep); color: var(--pink-deep); }
   .song-list { min-height: 0; margin: 0; padding: 0 9px 9px; overflow: auto; list-style: none; scrollbar-color: #c4d4cd transparent; }
   .song-row { display: flex; align-items: center; gap: 10px; min-height: 62px; padding: 7px 8px; border-top: 1px solid #e4eae4; }
   .song-row:first-child { border-top: 0; }
-  .song-row.is-current { background: #e9f1eb; }
+  .song-row.is-current { background: #e9f1eb; box-shadow: inset 3px 0 0 #c6687a; }
   .song-row__number { flex: none; width: 18px; color: #82948b; font-size: 10px; }
   .song-row__art { flex: none; display: grid; place-items: center; width: 39px; height: 39px; background: var(--song-color, #edb0bb); color: #fffdf6; font-size: 20px; }
   .song-row__body { display: grid; gap: 4px; min-width: 0; flex: 1; }
@@ -794,12 +810,12 @@ const stops = [
   @media (max-width: 1220px) {
     .town-route { width: min(620px, calc(100% - 375px)); }
     .place-stamp { display: none; }
-    .player-bar { bottom: calc(max(27px, env(safe-area-inset-bottom)) + 82px); }
+    .drawer-handle { bottom: calc(max(27px, env(safe-area-inset-bottom)) + 82px); }
     .song-drawer { bottom: calc(max(27px, env(safe-area-inset-bottom)) + 150px); max-height: calc(100svh - 240px); }
   }
   @media (max-width: 960px) {
     .town-route { width: min(650px, calc(100% - 42px)); bottom: max(18px, env(safe-area-inset-bottom)); }
-    .player-bar { bottom: calc(max(18px, env(safe-area-inset-bottom)) + 81px); }
+    .drawer-handle { bottom: calc(max(18px, env(safe-area-inset-bottom)) + 81px); }
     .song-drawer { bottom: calc(max(18px, env(safe-area-inset-bottom)) + 149px); max-height: calc(100svh - 245px); }
     .video-panel { top: 120px; }
   }
@@ -827,8 +843,7 @@ const stops = [
     .town-route__stop { min-height: 58px; padding-top: 10px; gap: 5px; }
     .town-route__stop strong { font-size: 11px; }
     .town-route__number { font-size: 9px; }
-    .player-bar { left: 11px; bottom: calc(max(9px, env(safe-area-inset-bottom)) + 168px); width: min(290px, calc(100% - 152px)); height: 52px; }
-    .player-bar__record { width: 38px; height: 38px; }
+    .drawer-handle { left: 11px; bottom: calc(max(9px, env(safe-area-inset-bottom)) + 168px); padding: 6px 10px 5px; }
     .move-pad { position: absolute; z-index: 7; right: 12px; bottom: calc(max(9px, env(safe-area-inset-bottom)) + 74px); display: grid; grid-template-columns: repeat(3, 38px); grid-template-rows: repeat(3, 38px); gap: 2px; }
     .move-pad button { width: 38px; height: 38px; padding: 0; border: 1px solid #fffdf6ac; border-radius: 5px; background: #f8f5ece5; color: #275c54; font-size: 20px; line-height: 1; touch-action: none; user-select: none; }
     .move-pad button.is-pressed { background: #e7a0ad; color: #173a3b; }
@@ -853,7 +868,7 @@ const stops = [
   }
   @media (max-height: 650px) and (max-width: 720px) {
     .identity p { display: none; }
-    .player-bar { bottom: calc(max(9px, env(safe-area-inset-bottom)) + 143px); }
+    .drawer-handle { bottom: calc(max(9px, env(safe-area-inset-bottom)) + 143px); }
     .move-pad { grid-template-columns: repeat(3, 32px); grid-template-rows: repeat(3, 32px); bottom: calc(max(9px, env(safe-area-inset-bottom)) + 72px); }
     .move-pad button { width: 32px; height: 32px; }
     .song-drawer { max-height: 86svh; }
