@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { makeSurfaceTextures } from './textures'
+import { POLE_X } from './layout'
+import { toonMaterial } from './toon'
 
 /** Street-level detail: textured surfaces, small shop displays and irregular planting. */
 export function addTownDetails(scene: THREE.Scene) {
@@ -13,11 +15,11 @@ export function addTownDetails(scene: THREE.Scene) {
   const plane = keep(new THREE.PlaneGeometry(1, 1))
   const sphere = keep(new THREE.SphereGeometry(1, 9, 7))
   const cylinder = keep(new THREE.CylinderGeometry(1, 1, 1, 10))
-  const white = keep(new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9 }))
-  const woody = keep(new THREE.MeshStandardMaterial({ color: '#ffffff', map: textures.wood, roughness: 0.92 }))
-  const asphalt = keep(new THREE.MeshStandardMaterial({ color: '#ffffff', map: textures.asphalt, roughness: 0.98 }))
-  let hazard: THREE.MeshStandardMaterial
-  const carpet = keep(new THREE.MeshStandardMaterial({ map: textures.blossomCarpet, transparent: true, alphaTest: 0.22, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -2 }))
+  const white = keep(toonMaterial())
+  const woody = keep(toonMaterial({ map: textures.wood }))
+  const asphalt = keep(toonMaterial({ map: textures.asphalt }))
+  let hazard: THREE.MeshToonMaterial
+  const carpet = keep(toonMaterial({ map: textures.blossomCarpet, soft: true, transparent: true, alphaTest: 0.22, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }))
   textures.asphalt.repeat.set(3, 32)
   const batches = new Map<string, { geometry: THREE.BufferGeometry; material: THREE.Material; items: {p:number[];s:number[];color:THREE.Color;ry:number;rx:number}[] }>()
   function part(type: string, x: number, y: number, z: number, sx: number, sy: number, sz: number, color: string, ry = 0, rx = 0) {
@@ -52,7 +54,7 @@ export function addTownDetails(scene: THREE.Scene) {
     }
     ctx.fillStyle='rgba(255,242,179,.14)';ctx.fillRect(0,0,25,512)
   })
-  hazard=keep(new THREE.MeshStandardMaterial({map:hazardTexture,roughness:.88}))
+  hazard=keep(toonMaterial({map:hazardTexture}))
   const petalPatch = mapCanvas(1024, 1024, ctx => {
     ctx.drawImage(textures.blossomCarpet.image, 0, 0, 1024, 1024)
     const image = ctx.getImageData(0, 0, 1024, 1024)
@@ -74,28 +76,30 @@ export function addTownDetails(scene: THREE.Scene) {
   scene.traverse(object => {
     if (!(object instanceof THREE.Mesh)) return
     if (object.name === 'Buildings, road, props and shopfronts') {
-      const material = object.material as THREE.MeshStandardMaterial
+      const material = object.material as THREE.MeshToonMaterial
       material.map = textures.stucco; material.needsUpdate = true
     }
     if (object.name === 'Branches, lamps and utility lines') {
-      const material = object.material as THREE.MeshStandardMaterial
+      const material = object.material as THREE.MeshToonMaterial
       material.map = textures.bark; material.needsUpdate = true
     }
   })
 
-  for (const [start,end] of [[27,-22],[-40,-50.8],[-57,-78]]) {
-    flat(asphalt,0,.081,(start+end)/2,7.18,start-end)
+  for (const [start,end] of [[27,-22],[-40,-50.8],[-57,-78],[-98,-137]]) {
+    flat(asphalt,0,.081,(start+end)/2,11.7,start-end)
   }
   const markings = keep(new THREE.MeshBasicMaterial({ color: '#e7e4d9', transparent: true, opacity: .88, depthWrite:false }))
-  const yellow = keep(new THREE.MeshStandardMaterial({ color: '#dba639', roughness:1 }))
+  const yellow = keep(toonMaterial({ color: '#dba639' }))
   for (let z=26; z>-77; z-=5.8) {
     if (z < -22 && z > -40 || z < -50 && z > -57) continue
     flat(z > 0 ? yellow : markings,0,.09,z,.085,z>0?5.8:2.1)
   }
-  for (const x of [-3.43,3.43]) flat(markings,x,.093,-24,.10,103)
-  for (const z of [-19.5,-47.5,-73]) {
-    for (let x=-3.1;x<3.4;x+=.75) flat(markings,x,.098,z,.4,2.4)
-    flat(markings,0,.098,z+2.2,6.9,.22)
+  for (let z=-98; z>-137; z-=5.8) flat(markings,0,.09,z,.085,2.1)
+  for (const x of [-6.05,6.05]) flat(markings,x,.093,-24,.10,103)
+  for (const x of [-6.05,6.05]) flat(markings,x,.093,-117.5,.10,39)
+  for (const z of [-19.5,-47.5,-73,-104,-123]) {
+    for (let x=-5.4;x<5.6;x+=.75) flat(markings,x,.098,z,.4,2.4)
+    flat(markings,0,.098,z+2.2,11.2,.22)
   }
   const roadText = mapCanvas(256,512,ctx => {
     ctx.clearRect(0,0,256,512)
@@ -112,38 +116,52 @@ export function addTownDetails(scene: THREE.Scene) {
     ctx.beginPath();ctx.moveTo(65,260);ctx.lineTo(117,190);ctx.lineTo(192,260);ctx.lineTo(65,260);ctx.moveTo(192,260);ctx.lineTo(164,157);ctx.lineTo(188,157);ctx.stroke()
     ctx.beginPath();ctx.moveTo(88,420);ctx.lineTo(128,380);ctx.lineTo(168,420);ctx.stroke()
   })
-  const bikeMat=keep(new THREE.MeshStandardMaterial({map:bikeMark,roughness:1,transparent:true,opacity:.72}))
-  for(const z of [17,-8,-43,-67]) flat(bikeMat,2.75,.104,z,.55,1.1)
+  const bikeMat=keep(toonMaterial({map:bikeMark,transparent:true,opacity:.72}))
+  for(const z of [17,-8,-43,-67,-101,-119]) flat(bikeMat,4.4,.104,z,.55,1.1)
 
   // Large irregular patches of thousands of tiny petals, with clear asphalt between them.
   for (let i=0;i<40;i++) {
     const z=24-i*2.7
     if(z<-50&&z>-57) continue
-    const x=Math.sin(i*2.73)*2.85
+    const x=Math.sin(i*2.73)*4.6
     flat(carpet,x,.112,z,3.1+(i%3)*.45,3.2+(i%2)*.45,i*1.7)
   }
-  for(const side of [-1,1]) {
-    for(let z=25;z>-77;z-=7.8) flat(carpet,side*4.7,.126,z,1.5,4.4,z)
+    for(const side of [-1,1]) {
+    for(let z=25;z>-77;z-=7.8) flat(carpet,side*7.7,.126,z,1.5,4.4,z)
     // Individual paving joints, a tactile strip and grated drainage channels.
     for(let z=27;z>-78;z-=.62) {
       if(z<-50&&z>-57) continue
-      part('box',side*5.02,.124,z,2.04,.01,.016,'#b1b8b4')
+      part('box',side*7.95,.124,z,2.04,.01,.016,'#b1b8b4')
     }
-    for(const x of [4.18,4.72,5.26,5.8]) part('box',side*x,.125,-25,.014,.01,102,'#b6bdb7')
+    for(const x of [6.9,7.44,7.98,8.52]) part('box',side*x,.125,-25,.014,.01,102,'#b6bdb7')
     for(let z=27;z>-78;z-=.42) {
       if(z<-50&&z>-57) continue
-      part('box',side*4.22,.135,z,.28,.02,.38,'#d7b84c')
-      for(const dx of [-.08,0,.08]) part('box',side*4.22+dx,.15,z,.018,.012,.30,'#ebcc64')
+      part('box',side*7.05,.135,z,.28,.02,.38,'#d7b84c')
+      for(const dx of [-.08,0,.08]) part('box',side*7.05+dx,.15,z,.018,.012,.30,'#ebcc64')
     }
     for(let z=23;z>-78;z-=9.4) {
-      part('box',side*3.82,.137,z,.22,.01,.7,'#55636a')
-      for(let k=-.28;k<.3;k+=.08) part('box',side*3.82,.143,z+k,.24,.01,.02,'#8b9798')
+      part('box',side*6.45,.137,z,.22,.01,.7,'#55636a')
+      for(let k=-.28;k<.3;k+=.08) part('box',side*6.45,.143,z+k,.24,.01,.02,'#8b9798')
+    }
+  }
+  for(const side of [-1,1]) {
+    for(let z=-98;z>-137;z-=7.8) flat(carpet,side*7.7,.126,z,1.5,4.4,z)
+    for(let z=-98;z>-137;z-=.62) {
+      part('box',side*7.95,.124,z,2.04,.01,.016,'#b1b8b4')
+    }
+    for(let z=-99;z>-137;z-=.42) {
+      part('box',side*7.05,.135,z,.28,.02,.38,'#d7b84c')
+      for(const dx of [-.08,0,.08]) part('box',side*7.05+dx,.15,z,.018,.012,.30,'#ebcc64')
+    }
+    for(let z=-99;z>-137;z-=9.4) {
+      part('box',side*6.45,.137,z,.22,.01,.7,'#55636a')
+      for(let k=-.28;k<.3;k+=.08) part('box',side*6.45,.143,z+k,.24,.01,.02,'#8b9798')
     }
   }
 
   // The existing utility poles get protective street-level sleeves.
-  for(const side of [-1,1]) for(let z=21;z>-77;z-=17.5) {
-    const x=side*6.55
+  for(const side of [-1,1]) for(let z=21;z>-136;z-=17.5) {
+    const x=side*POLE_X
     part('hazard',x,.54,z,.155,.92,.155,'#ffffff')
     part('cylinder',x,.99,z,.165,.045,.165,'#48565a')
     part('cylinder',x,.09,z,.17,.075,.17,'#4a5557')
@@ -151,7 +169,7 @@ export function addTownDetails(scene: THREE.Scene) {
 
   // Short curb rails frame the shops while leaving the crossings open.
   for(const [side,from,to] of [[-1,-1,-9],[1,-5,-14],[-1,-37,-44]]) {
-    const x=side*3.73, middle=(from+to)/2, length=from-to
+    const x=side*6.4, middle=(from+to)/2, length=from-to
     const sections=Math.ceil(length/1.35)
     for(let i=0;i<=sections;i++) {
       const z=from-length*i/sections
@@ -187,11 +205,13 @@ export function addTownDetails(scene: THREE.Scene) {
     part('box',x+side*.42,y+height*.43,z,.84,.05,.07,'#657875')
     part('box',x+side*.83,y+height*.43,z,.06,.14,.11,'#657875')
   }
-  sign('晴天唱片','VINYL / COFFEE',-5.93,3.95,11.7,.65,2.15,'#344f55')
-  sign('七里香','花と音楽',6.14,3.55,1.6,.56,2.05,'#8a5066')
-  sign('珈琲','SINCE 2000',6.2,3.75,-8.5,.56,1.8,'#72544b')
-  sign('和菓子','小さな春',-6.23,3.6,-17,.6,2.0,'#697862')
-  sign('写真館','MEMORIES',6.17,4.1,-41,.6,2.05,'#665a71')
+  sign('晴天唱片','VINYL / COFFEE',-12.05,3.95,11.7,.65,2.15,'#344f55')
+  sign('七里香','花と音楽',12.2,3.55,1.6,.56,2.05,'#8a5066')
+  sign('珈琲','SINCE 2000',12.25,3.75,-8.5,.56,1.8,'#72544b')
+  sign('和菓子','小さな春',-12.3,3.6,-17,.6,2.0,'#697862')
+  sign('写真館','MEMORIES',14.6,4.1,-26.2,.6,2.05,'#665a71')
+  sign('夜風茶屋','TEA / 18:00',-12.15,3.6,-107,.58,1.95,'#6b6d84')
+  sign('河岸写真館','RIVER SIDE',12.2,3.76,-119,.58,1.95,'#697d73')
 
   function pot(x:number,z:number,color:string,flowers=false,base=0,seed=0) {
     part('cylinder',x,base+.19,z,.18,.34,.18,color)
@@ -211,7 +231,7 @@ export function addTownDetails(scene: THREE.Scene) {
     }
   }
   for(const [side,z] of [[1,17],[-1,12],[1,-8],[-1,-16],[1,-42],[-1,-66]]) {
-    const x=side*5.98
+    const x=side*11.15
     // A wood flower display with multiple levels and slender supports.
     for(const level of [0,.52]) {
       part('wood',x,level+.35,z,.75,.075,1.85,'#cab394')
@@ -222,7 +242,7 @@ export function addTownDetails(scene: THREE.Scene) {
   }
 
   // Small A-frame menus face people coming down the street.
-  for(const [x,z] of [[5.2,14],[-5.2,-10],[5.3,-43]]) {
+  for(const [x,z] of [[8.5,14],[-8.5,-10],[8.6,-43]]) {
     const texture=mapCanvas(256,384,ctx=>{
       ctx.fillStyle='#38554f';ctx.fillRect(0,0,256,384)
       ctx.strokeStyle='#ddc5a3';ctx.lineWidth=16;ctx.strokeRect(8,8,240,368)
@@ -231,7 +251,7 @@ export function addTownDetails(scene: THREE.Scene) {
       ctx.font='17px Georgia';['COFFEE','VINYL & FLOWERS','11:00 — 19:00'].forEach((s,i)=>ctx.fillText(s,128,164+i*40))
       ctx.beginPath();ctx.arc(128,313,21,0,Math.PI*2);ctx.strokeStyle='#eee0cb';ctx.lineWidth=2;ctx.stroke()
     })
-    const mat=keep(new THREE.MeshStandardMaterial({map:texture,roughness:1,side:THREE.DoubleSide}))
+    const mat=keep(toonMaterial({map:texture,side:THREE.DoubleSide}))
     const mesh=new THREE.Mesh(plane,mat);mesh.position.set(x,.77,z);mesh.scale.set(.62,.92,1);mesh.rotation.x=-.08;group.add(mesh)
     for(const dx of [-.35,.35]) part('wood',x+dx,.69,z,.055,1.18,.06,'#ad9375',0,-.1)
   }
@@ -249,26 +269,28 @@ export function addTownDetails(scene: THREE.Scene) {
       part('box',px,py-.13,front+.05,.085,.025,.018,'#87ba9a')
     }
   }
-  vending(-5.92,-6,'#8ea7a4')
-  vending(6,-44.5,'#b48d8b')
+  vending(-10.7,-6,'#8ea7a4')
+  vending(10.8,-44.5,'#b48d8b')
+  vending(-10.7,-112.5,'#899da7')
+  vending(16.4,-28.6,'#7f9a78')
 
   // Low garden walls and fine leaves break the hard edge of the streetscape.
   for(const [side,z,length] of [[1,3,5],[-1,-23,4],[1,-65,7]]) {
-    part('box',side*6,.38,z,.7,.59,length,'#c1c4b4')
-    part('box',side*6,.71,z,.79,.08,length+.12,'#a6ad9d')
+    part('box',side*11.4,.38,z,.7,.59,length,'#c1c4b4')
+    part('box',side*11.4,.71,z,.79,.08,length+.12,'#a6ad9d')
     for(let k=0;k<length*14;k++) {
-      const px=side*6+Math.sin(k*13.7)*.25,pz=z-length/2+(k/(length*14))*length
+      const px=side*11.4+Math.sin(k*13.7)*.25,pz=z-length/2+(k/(length*14))*length
       part('sphere',px,1.04+Math.sin(k)*.10,pz,.28,.36,.28,k%3?'#83a36a':'#62915e')
     }
   }
 
   // A readable bus front: windscreens, route label, lamps and a license plate.
-  part('box',-5.8,1.8,11.33,1.75,.87,.025,'#a9c3cb')
-  for(const x of [-6.63,-5.8,-4.97]) part('box',x,1.82,11.36,.04,.90,.03,'#e0ded6')
-  part('box',-5.8,2.48,11.36,1.65,.24,.035,'#53616a')
-  part('box',-5.8,.8,11.37,.51,.26,.03,'#d7bd69')
-  for(const x of [-6.55,-5.05]) part('box',x,1.05,11.37,.30,.19,.045,'#efe6cf')
-  part('box',-5.8,.61,11.35,1.92,.10,.10,'#5e6972')
+  part('box',-8.7,1.8,11.33,1.75,.87,.025,'#a9c3cb')
+  for(const x of [-9.53,-8.7,-7.87]) part('box',x,1.82,11.36,.04,.90,.03,'#e0ded6')
+  part('box',-8.7,2.48,11.36,1.65,.24,.035,'#53616a')
+  part('box',-8.7,.8,11.37,.51,.26,.03,'#d7bd69')
+  for(const x of [-9.45,-7.95]) part('box',x,1.05,11.37,.30,.19,.045,'#efe6cf')
+  part('box',-8.7,.61,11.35,1.92,.10,.10,'#5e6972')
 
   const transform=new THREE.Object3D()
   for(const [name,batch] of batches) {

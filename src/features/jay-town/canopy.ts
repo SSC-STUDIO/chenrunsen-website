@@ -6,7 +6,7 @@ export function softenCanopies(scene: THREE.Scene) {
   if (!source) return { update(_night:number,_pixel:number) {}, dispose() {} }
   // Retain the small flower cards only for their dappled shadows. The visible
   // crown uses round micro-blossoms, so no crossed rectangles face the camera.
-  const sourceMaterial = source.material as THREE.MeshLambertMaterial
+  const sourceMaterial = source.material as THREE.MeshToonMaterial
   const shadowOnly = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false })
   const flowerDepth = new THREE.MeshDepthMaterial({
     map: sourceMaterial.map, alphaTest: .5, depthPacking: THREE.RGBADepthPacking,
@@ -62,7 +62,7 @@ export function softenCanopies(scene: THREE.Scene) {
         float light=1.+(.15-.19*r)+(.5-grain)*.20;
         vec3 c=flowerColor*light;
         c=mix(c,c*vec3(.28,.35,.53),night);
-        c=mix(c,haze,smoothstep(45.,125.,depth));
+        c=mix(c,haze,smoothstep(85.,260.,depth));
         gl_FragColor=vec4(c,1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>

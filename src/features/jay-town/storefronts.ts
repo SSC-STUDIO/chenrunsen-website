@@ -1,4 +1,6 @@
 import * as THREE from 'three'
+import { eachShop } from './layout'
+import { toonMaterial } from './toon'
 
 type StorefrontHandle = { dispose(): void }
 type ShopKind = 'record' | 'flower' | 'bakery' | 'party' | 'book' | 'cafe' | 'general'
@@ -334,17 +336,7 @@ export function addStorefrontDetails(scene: THREE.Scene): StorefrontHandle {
     list.push({ position: new THREE.Vector3(x, y, z), scale: new THREE.Vector3(sx, sy, sz), color: new THREE.Color(color), rotation })
   }
 
-  let index = 0
-  for (const side of [-1, 1]) {
-    for (let z = 19; z > -76; z -= 9.2) {
-      if (z < -22 && z > -40) continue
-      if (z < -43 && z > -69) continue
-      if (z < -69 && z > -78) continue
-      const width = 6.4 + (index % 3) * 0.8
-      const height = 6.2 + (index % 4) * 0.85
-      const depth = 5.6 + (index % 2) * 1.2
-      const x = side * (9.7 + (index % 3) * 0.3)
-      const towardStreet = x - side * (depth / 2 + 0.03)
+  eachShop(({ index, side, z, width, height, towardStreet }) => {
       const kind = KINDS[index % KINDS.length]
       const face = new THREE.Quaternion().setFromAxisAngle(UP, -side * Math.PI / 2)
       if (!panels.has(kind)) panels.set(kind, [])
@@ -388,9 +380,7 @@ export function addStorefrontDetails(scene: THREE.Scene): StorefrontHandle {
         item(trim, posterX, 2.08, posterZ - 0.045, 0.96, 1.34, 0.055, '#eee5d5')
         item(streetPosters[streetPoster], posterX, 2.08, posterZ, 0.86, 1.24, 1, '#ffffff')
       }
-      index++
-    }
-  }
+  })
 
   const drawInstances = (name: string, geometry: THREE.BufferGeometry, material: THREE.Material, list: Instance[]) => {
     if (!list.length) return
@@ -436,7 +426,7 @@ export function addStorefrontDetails(scene: THREE.Scene): StorefrontHandle {
     materials.push(material)
     drawInstances(`Street wall poster ${i + 1}`, plane, material, streetPosters[i])
   })
-  const detailMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.78 })
+  const detailMaterial = toonMaterial()
   materials.push(detailMaterial)
   drawInstances('Woodwork and air conditioners', boxGeometry, detailMaterial, trim)
   drawInstances('Window plants', sphereGeometry, detailMaterial, leaves)

@@ -1,4 +1,6 @@
 import * as THREE from 'three'
+import { eachShop, POLE_X, SIDEWALK_X, TREE_X, type ShopSpot } from './layout'
+import { toonMaterial } from './toon'
 
 export type TownWorld = {
   dispose: () => void
@@ -127,70 +129,72 @@ export function buildTown(scene: THREE.Scene): TownWorld {
     return mesh
   }
 
-  const ground = keepMaterial(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.94 }))
-  const blossom = keepMaterial(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true }))
-  const wood = keepMaterial(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true }))
+  const ground = keepMaterial(toonMaterial())
+  const blossom = keepMaterial(toonMaterial({ soft: true }))
+  const wood = keepMaterial(toonMaterial())
   const lampMaterial = keepMaterial(new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }))
   const windowMaterial = keepMaterial(new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.52, toneMapped: false, depthWrite: false }))
 
   // The walkable spine is continuous; the river is visible on both sides of its bridge.
-  box(0, -0.34, -56, 8.15, 0.65, 164, '#566978')
-  box(0, -0.02, -56, 7.2, 0.06, 164, '#657480')
+  box(0, -0.34, -56, 13.4, 0.65, 164, '#566978')
+  box(0, -0.02, -56, 12.0, 0.06, 164, '#657480')
   for (const side of [-1, 1]) {
-    box(side * 5.1, 0.02, -56, 2.25, 0.19, 164, '#cad0c5')
-    box(side * 3.72, 0.065, -56, 0.12, 0.035, 163.5, '#e5e3d1')
-    box(side * 6.4, -0.11, -56, 0.55, 0.4, 164, '#abb8a9')
-    box(side * 23, -0.25, -25.5, 33, 0.55, 103, '#87a895')
-    box(side * 23, -0.25, -116, 33, 0.55, 44, '#87a895')
-    box(side * 4.0, 0.13, -56, 0.12, 0.12, 164, '#b4b9aa')
+    box(side * SIDEWALK_X, 0.02, -56, 2.7, 0.19, 164, '#cad0c5')
+    box(side * 6.15, 0.065, -56, 0.12, 0.035, 163.5, '#e5e3d1')
+    box(side * 9.15, -0.11, -56, 0.55, 0.4, 164, '#abb8a9')
+    box(side * 28, -0.25, -25.5, 38, 0.55, 103, '#87a895')
+    box(side * 28, -0.25, -116, 38, 0.55, 44, '#87a895')
+    box(side * 6.35, 0.13, -56, 0.12, 0.12, 164, '#b4b9aa')
   }
   for (let z = 22; z > -84; z -= 6) box(0, 0.04, z, 0.12, 0.014, 2.2, '#d8b35f')
   for (let z = -98; z > -136; z -= 5.8) box(0, 0.04, z, 0.1, 0.014, 1.9, '#d8b35f')
-  for (const z of [-31, -49, -74]) {
-    for (let x = -3.1; x <= 3.1; x += 0.78) box(x, 0.052, z, 0.49, 0.016, 2.65, '#e4e3d5')
+  for (const z of [-31, -49, -74, -104, -123]) {
+    for (let x = -5.5; x <= 5.5; x += 0.78) box(x, 0.052, z, 0.49, 0.016, 2.65, '#e4e3d5')
   }
   for (const side of [-1, 1]) {
-    box(side * 5.5, 0.13, -86, 0.3, 0.32, 17, '#aab8bb')
-    for (let z = -94; z < -77; z += 2.15) {
-      box(side * 5.5, 0.72, z, 0.18, 1.1, 0.18, '#e8ddd0')
+    box(side * 7.8, 0.13, -86, 0.3, 0.32, 26, '#aab8bb')
+    for (let z = -99; z < -73; z += 2.15) {
+      box(side * 7.8, 0.72, z, 0.18, 1.1, 0.18, '#e8ddd0')
     }
-    box(side * 5.5, 1.24, -86, 0.16, 0.13, 17, '#c3ae9f')
+    box(side * 7.8, 1.24, -86, 0.16, 0.13, 26, '#c3ae9f')
+    const railX = side * 7.8
+    colliders.push(new THREE.Box3(v(railX - 0.4, 0, -99), v(railX + 0.4, 1.6, -73)))
   }
 
   const water = new THREE.Mesh(
-    keepGeometry(new THREE.PlaneGeometry(118, 15)),
-    keepMaterial(new THREE.MeshStandardMaterial({ color: 0x6fa9ba, metalness: 0.18, roughness: 0.34, transparent: true, opacity: 0.94, side: THREE.DoubleSide })),
+    keepGeometry(new THREE.PlaneGeometry(160, 24)),
+    keepMaterial(toonMaterial({ color: 0x6fa9ba, transparent: true, opacity: 0.94, side: THREE.DoubleSide, depthWrite: false })),
   )
   water.rotation.x = -Math.PI / 2
   water.position.set(0, -0.11, -86)
   town.add(water)
-  for (let i = 0; i < 70; i++) {
-    const x = -55 + (i * 31.7) % 110
-    const z = -92 + (i * 7.37) % 12
+  for (let i = 0; i < 90; i++) {
+    const x = -70 + (i * 31.7) % 140
+    const z = -97 + (i * 7.37) % 22
     box(x, -0.09, z, 0.6 + (i % 4) * 0.3, 0.008, 0.035, i % 3 ? '#b5d7d4' : '#e3e9d7')
   }
   for (const side of [-1, 1]) {
-    box(side * 24, -0.04, -77.3, 34, 0.6, 2, '#84a78a')
-    box(side * 24, -0.04, -94.7, 34, 0.6, 2, '#84a78a')
-    for (const z of [-78.2, -93.8]) {
-      box(side * 28, -0.12, z, 43, 0.75, 0.55, '#b8beb5')
-      box(side * 28, 0.3, z, 43, 0.13, 0.78, '#d4d3c4')
+    box(side * 30, -0.04, -72.6, 42, 0.6, 2.2, '#84a78a')
+    box(side * 30, -0.04, -99.4, 42, 0.6, 2.2, '#84a78a')
+    for (const z of [-73.6, -98.4]) {
+      box(side * 32, -0.12, z, 48, 0.75, 0.55, '#b8beb5')
+      box(side * 32, 0.3, z, 48, 0.13, 0.78, '#d4d3c4')
     }
-    for (const z of [-77.3, -94.7]) {
-      box(side * 5.55, 0.47, z, 0.58, 0.84, 0.58, '#e6ded0')
-      box(side * 5.55, 0.95, z, 0.77, 0.17, 0.77, '#b8a893')
+    for (const z of [-72.6, -99.4]) {
+      box(side * 7.9, 0.47, z, 0.58, 0.84, 0.58, '#e6ded0')
+      box(side * 7.9, 0.95, z, 0.77, 0.17, 0.77, '#b8a893')
     }
-    box(side * 5.5, 0.72, -86, 0.08, 0.075, 17, '#d1c5b6')
-    for (const z of [-75.8, -96.2]) {
-      box(side * 24, 0.055, z, 34, 0.08, 1.45, '#c5cabd')
-      for (let x = 8; x < 39; x += 2.2) {
+    box(side * 7.85, 0.72, -86, 0.08, 0.075, 26, '#d1c5b6')
+    for (const z of [-71.2, -100.8]) {
+      box(side * 28, 0.055, z, 36, 0.08, 1.45, '#c5cabd')
+      for (let x = 10; x < 44; x += 2.2) {
         box(side * x, 0.112, z, 0.045, 0.015, 1.32, '#e0ddd1')
       }
     }
-    const benchZ = side < 0 ? -75.6 : -96.0
-    box(side * 9.8, 0.52, benchZ, 1.8, 0.12, 0.52, '#b99672')
-    box(side * 9.8, 0.74, benchZ - 0.2, 1.8, 0.55, 0.12, '#ad856b')
-    for (const edge of [-0.68, 0.68]) box(side * 9.8 + edge, 0.28, benchZ, 0.12, 0.56, 0.43, '#6f7773')
+    const benchZ = side < 0 ? -71.0 : -101.2
+    box(side * 12.4, 0.52, benchZ, 1.8, 0.12, 0.52, '#b99672')
+    box(side * 12.4, 0.74, benchZ - 0.2, 1.8, 0.55, 0.12, '#ad856b')
+    for (const edge of [-0.68, 0.68]) box(side * 12.4 + edge, 0.28, benchZ, 0.12, 0.56, 0.43, '#6f7773')
   }
 
   const buildingColors = ['#e7ddd1', '#d4d9d5', '#edd5cd', '#c5d4ce', '#dad4dc', '#efe5d5']
@@ -225,12 +229,8 @@ export function buildTown(scene: THREE.Scene): TownWorld {
     town.add(mesh)
   }
 
-  function building(side: number, z: number, index: number) {
-    const width = 6.4 + (index % 3) * 0.8
-    const height = 6.2 + (index % 4) * 0.85
-    const depth = 5.6 + (index % 2) * 1.2
-    const x = side * (9.7 + (index % 3) * 0.3)
-    const towardStreet = x - side * (depth / 2 + 0.03)
+  function building(spot: ShopSpot) {
+    const { side, z, index, width, height, depth, x, towardStreet, record } = spot
     const wall = buildingColors[index % buildingColors.length]
     const trim = trimColors[index % trimColors.length]
     const roof = roofColors[index % roofColors.length]
@@ -275,11 +275,18 @@ export function buildTown(scene: THREE.Scene): TownWorld {
       box(towardStreet + side * 0.12, height * 0.48, z + edge * (width / 2 - 0.28), 0.08, height * 0.96, 0.08, '#e2e1d6')
     }
     // A striped fabric awning faces the road, with the scallop visible at pedestrian height.
-    box(towardStreet - side * 0.78, 2.94, z, 1.6, 0.12, width - 0.2, index % 2 ? '#d9e0d1' : '#eccbc1')
+    box(towardStreet - side * 0.78, 2.94, z, 1.6, 0.12, width - 0.2, record ? '#2a4558' : index % 2 ? '#d9e0d1' : '#eccbc1')
     for (let j = 0; j < 8; j++) {
       box(towardStreet - side * 0.83, 3.0, z - width * 0.43 + j * (width * 0.86 / 7), 1.62, 0.035, width * 0.085, j % 2 ? '#f6ecde' : trim)
     }
-    shopSign(shopNames[index % shopNames.length], side, towardStreet - side * 0.22, 3.71, z, Math.min(width - 0.8, 5.1), index % 2 ? '#e8c9aa' : '#c9d9cf')
+    shopSign(record ? '晴天唱片' : shopNames[index % shopNames.length], side, towardStreet - side * 0.22, 3.71, z, Math.min(width - 0.8, 5.1), record ? '#1d3a44' : index % 2 ? '#e8c9aa' : '#c9d9cf')
+    if (record) {
+      const bladeX = towardStreet - side * 1.55
+      const bladeZ = z + width * 0.42
+      box(bladeX, 3.35, bladeZ, 1.85, 1.55, 0.1, '#16343c')
+      box(bladeX, 3.35, bladeZ, 1.62, 1.28, 0.04, '#f4e7d4')
+      box(towardStreet - side * 0.7, 3.35, bladeZ, 0.9, 0.08, 0.08, '#16343c')
+    }
     // A small projecting sign reads clearly when approaching along the street.
     box(towardStreet - side * 0.67, 4.4, z + width * 0.42, 0.76, 0.76, 0.08, '#ece4d6')
     box(towardStreet - side * 0.74, 4.4, z + width * 0.42, 0.7, 0.7, 0.02, '#dba7a5')
@@ -298,15 +305,7 @@ export function buildTown(scene: THREE.Scene): TownWorld {
     }
   }
 
-  let shopIndex = 0
-  for (const side of [-1, 1]) {
-    for (let z = 19; z > -76; z -= 9.2) {
-      if (z < -22 && z > -40) continue // plaza and its open sightline
-      if (z < -43 && z > -69) continue // railway crossing and station
-      if (z < -69 && z > -78) continue // river approach
-      building(side, z, shopIndex++)
-    }
-  }
+  eachShop(building)
 
   // The far bank continues as a quieter residential street beyond the bridge.
   for (const side of [-1, 1]) {
@@ -314,7 +313,9 @@ export function buildTown(scene: THREE.Scene): TownWorld {
       const width = 5.8 + (index % 2) * 1.1
       const depth = 5.0 + (index % 3) * 0.6
       const height = 4.5 + ((index + (side + 1) / 2) % 3) * 0.8
-      const x = side * (10.4 + (index % 2) * 1.5)
+      // Bring the far-bank façades closer to the eight-metre road so they
+      // remain readable from the approach and fifth stop.
+      const x = side * (14.4 + (index % 2) * 0.7)
       const front = x - side * (depth / 2 + 0.05)
       const wall = buildingColors[(index + 2 + (side + 1) / 2) % buildingColors.length]
       const roof = roofColors[(index + 1) % roofColors.length]
@@ -333,6 +334,35 @@ export function buildTown(scene: THREE.Scene): TownWorld {
       box(front - side * 0.45, 2.67, z, 0.93, 0.1, width - 0.4, index % 2 ? '#b2c4aa' : '#cfb7aa')
     }
   }
+  const farBankSigns = ['青い春書店', '夜風茶屋', '春灯り商店', '河岸写真館']
+  for (const side of [-1, 1]) {
+    for (const [index, z] of [-101, -110, -119, -128].entries()) {
+      const x = side * (12.55 + (index % 2) * 0.45)
+      // Narrow hanging signs and fabric awnings make the far-bank façades
+      // legible at street level instead of leaving them as blank blocks.
+      shopSign(farBankSigns[(index + (side < 0 ? 0 : 2)) % farBankSigns.length], side,
+        x - side * 0.06, 3.36 + (index % 2) * 0.18, z, 4.15,
+        index % 2 ? '#d9c8b4' : '#bcd2cc')
+      box(x - side * 0.45, 2.72, z, 1.02, 0.1, 4.5, index % 2 ? '#e5c1b6' : '#cad5c6')
+      box(x - side * 0.57, 2.4, z + 1.9, 0.08, 0.62, 0.08, '#a37969')
+      box(x - side * 0.57, 2.4, z + 1.9, 0.36, 0.06, 0.36, '#d8b27e')
+    }
+  }
+  // A small river-lane gate gives the long road a destination landmark.
+  box(-4.65, 2.05, -133.6, 0.32, 4.1, 0.34, '#6f5a59')
+  box(4.65, 2.05, -133.6, 0.32, 4.1, 0.34, '#6f5a59')
+  box(0, 4.05, -133.6, 9.65, 0.34, 0.34, '#6f5a59')
+  const gateCanvas = document.createElement('canvas')
+  gateCanvas.width = 1024; gateCanvas.height = 180
+  const gateCtx = gateCanvas.getContext('2d')!
+  gateCtx.fillStyle = '#ead7c2'; gateCtx.fillRect(0, 0, 1024, 180)
+  gateCtx.strokeStyle = '#9a7774'; gateCtx.lineWidth = 9; gateCtx.strokeRect(12, 12, 1000, 156)
+  gateCtx.fillStyle = '#4a5960'; gateCtx.font = 'bold 92px "Microsoft YaHei", sans-serif'
+  gateCtx.textAlign = 'center'; gateCtx.textBaseline = 'middle'; gateCtx.fillText('河岸春町  RIVERSIDE', 512, 96)
+  const gateTexture = keepTexture(new THREE.CanvasTexture(gateCanvas)); gateTexture.colorSpace = THREE.SRGBColorSpace
+  const gateMaterial = keepMaterial(new THREE.MeshBasicMaterial({ map: gateTexture, side: THREE.DoubleSide, toneMapped: false }))
+  const gate = new THREE.Mesh(keepGeometry(new THREE.PlaneGeometry(8.8, 1.45)), gateMaterial)
+  gate.position.set(0, 4.25, -133.38); town.add(gate)
   box(0, -0.02, -135.5, 76, 0.06, 7.5, '#63747b')
   for (const side of [-1, 1]) {
     box(side * 18, 0.12, -133.3, 23, 0.24, 0.75, '#b4c3b7')
@@ -370,21 +400,83 @@ export function buildTown(scene: THREE.Scene): TownWorld {
   box(-8.6, 0.13, -59.6, 1.3, 0.18, 4.2, '#c9b9a3')
   shopSign('樱町站', -1, -8.68, 4.47, -59.6, 5.6, '#edddc6')
   colliders.push(new THREE.Box3(v(-16.4, 0, -65.4), v(-9, 5.8, -53.8)))
+  box(-15, 0.34, -50.6, 11, 0.38, 3.4, '#e7e2d6')
+  for (let x = -19.2; x <= -10.8; x += 2.8) box(x, 2.35, -50.6, 0.16, 4.05, 0.16, '#5c6a70')
+  box(-15, 4.45, -50.6, 12.2, 0.14, 4.6, '#f6f1e8')
+  box(-15, 4.18, -49.0, 12.2, 0.22, 0.14, '#c4514a')
+  shopSign('站台', -1, -10.15, 3.15, -50.6, 3.8, '#f3e6d2')
+  colliders.push(new THREE.Box3(v(-20.6, 0, -52.4), v(-9.4, 4.6, -48.8)))
 
-  // Plaza: a low pavilion and a blossom-ringed place to pause.
-  box(0, 0.08, -31.5, 17, 0.16, 18, '#c8c8b9')
-  for (let x = -7.7; x <= 7.7; x += 1.3) {
-    box(x, 0.175, -31.5, 0.055, 0.012, 17.5, '#dddbcc')
-  }
-  box(0, 0.35, -31.5, 3.8, 0.4, 3.8, '#a6c2bd')
-  sphere(0, 0.56, -31.5, 1.6, 0.32, 1.6, '#95bbbd')
-  box(0, 0.76, -31.5, 0.24, 0.35, 0.24, '#d7e4db')
-  colliders.push(new THREE.Box3(v(-2.05, 0, -33.55), v(2.05, 1.05, -29.45)))
+  // Plaza crossing: the side road sits above the long sidewalk so the junction stays open.
   for (const side of [-1, 1]) {
-    box(side * 8.7, 0.29, -31.5, 2.4, 0.42, 8.2, '#b8c5ad')
-    for (const z of [-37, -33, -29, -25]) {
-      box(side * 7.55, 0.5, z, 0.28, 0.55, 1.9, '#a8816b')
-      box(side * 7.55, 0.82, z, 0.36, 0.12, 2.1, '#c89c76')
+    box(side * 20, 0.16, -31.5, 26, 0.08, 8.6, '#657480')
+    box(side * 20, 0.2, -31.5 - 5.1, 26, 0.1, 1.8, '#cad0c5')
+    box(side * 20, 0.2, -31.5 + 5.1, 26, 0.1, 1.8, '#cad0c5')
+    for (let x = 8.2; x <= 16; x += 0.72) box(side * x, 0.22, -31.5, 0.28, 0.02, 6.4, '#e7e4d8')
+  }
+  box(0, 0.08, -31.5, 22, 0.16, 20, '#c8c8b9')
+  for (let x = -9; x <= 9; x += 1.3) box(x, 0.175, -31.5, 0.055, 0.012, 18, '#dddbcc')
+  box(-11.2, 0.35, -26.4, 3.2, 0.4, 3.2, '#a6c2bd')
+  sphere(-11.2, 0.56, -26.4, 1.35, 0.28, 1.35, '#95bbbd')
+  box(-11.2, 0.76, -26.4, 0.22, 0.32, 0.22, '#d7e4db')
+  colliders.push(new THREE.Box3(v(-12.9, 0, -28.1), v(-9.5, 1.05, -24.7)))
+  for (const side of [-1, 1]) {
+    for (const z of [-38.5, -24.5]) {
+      box(side * 14.5, 0.5, z, 0.28, 0.55, 1.9, '#a8816b')
+      box(side * 14.5, 0.82, z, 0.36, 0.12, 2.1, '#c89c76')
+    }
+  }
+
+  // Station approach: a short cross street in front of the platform.
+  for (const side of [-1, 1]) {
+    box(side * 18, 0.16, -47, 22, 0.08, 7.4, '#657480')
+    box(side * 18, 0.2, -47 - 4.4, 22, 0.1, 1.5, '#cad0c5')
+    box(side * 18, 0.2, -47 + 4.4, 22, 0.1, 1.5, '#cad0c5')
+    for (let x = 8; x <= 14.5; x += 0.72) box(side * x, 0.22, -47, 0.26, 0.02, 5.4, '#e7e4d8')
+  }
+
+  function cottage(x: number, z: number) {
+    const wall = x > 0 ? '#efe4d6' : '#e7ddd4'
+    const roof = x > 0 ? '#6a5968' : '#5d6a72'
+    box(x, 2.35, z, 6.4, 4.7, 5.6, wall)
+    for (const slope of [-1, 1]) {
+      box(x + slope * 1.7, 5.05, z, 3.5, 0.22, 6.2, roof, new THREE.Quaternion().setFromAxisAngle(v(0, 0, 1), -slope * 0.32))
+    }
+    box(x, 5.55, z, 0.22, 0.2, 6.3, '#4e5960')
+    box(x, 1.5, z, 0.12, 2.2, 2.4, '#6d8b92')
+    colliders.push(new THREE.Box3(v(x - 3.3, 0, z - 2.9), v(x + 3.3, 5.6, z + 2.9)))
+  }
+  cottage(27.2, -31.5)
+  cottage(-27.2, -31.5)
+  cottage(23.5, -47)
+  cottage(-23.5, -47)
+  for (const [x, z] of [[27.2, -31.5], [-27.2, -31.5], [23.5, -47], [-23.5, -47]] as const) {
+    box(x, 0.42, z + 3.3, 4.2, 0.55, 0.16, '#d9d4c6')
+    box(x - 1.8, 0.7, z + 3.3, 0.12, 1.15, 0.12, '#8d7b68')
+    box(x + 1.8, 0.7, z + 3.3, 0.12, 1.15, 0.12, '#8d7b68')
+  }
+
+  // Street-mouth torii. The posts sit on the sidewalk so the road stays open.
+  const toriiZ = 16.2
+  const toriiSpan = 7.55
+  const toriiH = 6.35
+  for (const side of [-1, 1]) {
+    box(side * toriiSpan, toriiH * 0.46, toriiZ, 0.42, toriiH, 0.42, '#c23a32')
+    box(side * toriiSpan, 0.28, toriiZ, 0.62, 0.16, 0.62, '#2a2424')
+    colliders.push(new THREE.Box3(
+      v(side * toriiSpan - 0.4, 0, toriiZ - 0.4),
+      v(side * toriiSpan + 0.4, toriiH, toriiZ + 0.4),
+    ))
+  }
+  box(0, toriiH * 0.93, toriiZ, toriiSpan * 2 + 1.8, 0.22, 0.7, '#2a2424')
+  box(0, toriiH * 0.82, toriiZ, toriiSpan * 2 + 0.5, 0.16, 0.52, '#c23a32')
+  box(0, toriiH * 0.6, toriiZ, toriiSpan * 2 - 0.7, 0.12, 0.28, '#c23a32')
+
+  for (const side of [-1, 1]) {
+    for (const z of [8, -12, -18]) {
+      box(side * 11.35, 0.48, z, 0.08, 0.72, 3.4, '#e4dfd4')
+      box(side * 11.35, 0.86, z - 1.6, 0.12, 1.5, 0.12, '#8d7b68')
+      box(side * 11.35, 0.86, z + 1.6, 0.12, 1.5, 0.12, '#8d7b68')
     }
   }
 
@@ -488,14 +580,25 @@ export function buildTown(scene: THREE.Scene): TownWorld {
       if (side === -1 && z > 18) continue // foreground cherry tree replaces this regular tree
       if (side === -1 && z > 6 && z < 12) continue // bus stop
       const irregular = hash(treeIndex * 37 + 5) - 0.5
-      sakuraTree(side * (5.56 + irregular * 0.58), z + irregular * 1.9,
+      sakuraTree(side * (TREE_X + irregular * 0.45), z + irregular * 1.9,
         0.77 + hash(treeIndex * 19 + 2) * 0.29, treeIndex++)
     }
     for (const [i, z] of [-80, -84, -90, -94].entries()) {
       sakuraTree(side * (8.8 + (i % 2) * 4.3), z, 1.02 + i * 0.04, treeIndex++)
     }
   }
-  sakuraTree(-4.6, 19.2, 1.29, 57)
+  // A second, quieter cherry-lined lane keeps the far bank from reading as
+  // an empty backdrop when the player reaches the fifth stop.
+  for (const side of [-1, 1]) {
+    let row = 0
+    for (let z = -99; z > -136; z -= 7.4 + hash(row * 31 + side * 5) * 1.1) {
+      const wobble = (hash(row * 41 + side * 11) - 0.5) * 0.65
+      sakuraTree(side * (TREE_X + wobble * 0.35), z, 0.78 + hash(row * 19 + side * 17) * 0.2, treeIndex++)
+      row++
+    }
+  }
+  sakuraTree(-6.4, 20.4, 1.45, 57)
+  sakuraTree(1.15, -31.5, 2.45, 880)
   sakuraTree(-6.16, -107.3, 0.64, 104)
   sakuraTree(6.08, -118.5, 0.67, 109)
   for (const [i, [x, z]] of [[-11, -24], [11, -24], [-11, -39], [11, -39]].entries()) {
@@ -505,9 +608,11 @@ export function buildTown(scene: THREE.Scene): TownWorld {
   // Streetlights and utility lines provide the town's strong street perspective.
   for (const side of [-1, 1]) {
     const poles: number[] = []
-    for (let z = 21; z > -77; z -= 17.5) {
+    // Continue the utility rhythm over the bridge and into the far-bank
+    // neighborhood so the world reads as one connected Japanese street.
+    for (let z = 21; z > -136; z -= 17.5) {
       poles.push(z)
-      const x = side * 6.55
+      const x = side * POLE_X
       line([x, 0.1, z], [x, 7.65, z], 0.095, '#55616c')
       line([x, 7.4, z], [x - side * 1.8, 7.4, z], 0.065, '#55616c')
       line([x, 5.95, z - 0.54], [x, 5.95, z + 0.54], 0.055, '#6d747a')
@@ -530,10 +635,10 @@ export function buildTown(scene: THREE.Scene): TownWorld {
         const start = poles[p]
         const end = poles[p + 1]
         for (const offset of [-0.48, 0.48]) {
-          let prev = v(side * 6.55, height, start + offset)
+          let prev = v(side * POLE_X, height, start + offset)
           for (let segment = 1; segment <= 5; segment++) {
             const t = segment / 5
-            const next = v(side * 6.55, height - Math.sin(t * Math.PI) * 0.74, THREE.MathUtils.lerp(start, end, t) + offset)
+            const next = v(side * POLE_X, height - Math.sin(t * Math.PI) * 0.74, THREE.MathUtils.lerp(start, end, t) + offset)
             rod(prev, next, 0.012, '#404b55')
             prev = next
           }
@@ -541,12 +646,12 @@ export function buildTown(scene: THREE.Scene): TownWorld {
       }
     }
   }
-  for (const z of [19, -16, -68]) {
+  for (const z of [19, -16, -68, -116]) {
     for (const offset of [-0.5, 0.4]) {
-      let prev = v(-6.55, 6.4, z + offset)
+      let prev = v(-POLE_X, 6.4, z + offset)
       for (let segment = 1; segment <= 8; segment++) {
         const t = segment / 8
-        const next = v(THREE.MathUtils.lerp(-6.55, 6.55, t), 6.4 - Math.sin(t * Math.PI) * 1.1, z + offset)
+        const next = v(THREE.MathUtils.lerp(-POLE_X, POLE_X, t), 6.4 - Math.sin(t * Math.PI) * 1.1, z + offset)
         rod(prev, next, 0.012, '#404b55')
         prev = next
       }
@@ -559,23 +664,23 @@ export function buildTown(scene: THREE.Scene): TownWorld {
     for (let x = -39; x <= 39; x += 1.4) box(x, 0.04, z + (z === -54.9 ? 1 : -1) * 1.05, 0.24, 0.1, 3.3, '#746a61')
   }
   for (const side of [-1, 1]) {
-    const x = side * 5.72
+    const x = side * 8.15
     for (const z of [-56.1, -51.4]) {
       line([x, 0.1, z], [x, 3.4, z], 0.1, '#505865')
       box(x, 3.1, z, 0.72, 0.65, 0.28, '#3f4853')
       sphere(x - side * 0.11, 3.14, z + 0.19, 0.14, 0.14, 0.08, '#e95852')
       sphere(x + side * 0.11, 3.14, z + 0.19, 0.14, 0.14, 0.08, '#f3d36b')
-      line([x, 2.2, z], [x - side * 3.6, 2.2, z], 0.07, '#eee6d5')
-      for (let offset = 0.5; offset <= 3.5; offset += 0.7) {
+      line([x, 2.2, z], [x - side * 6.4, 2.2, z], 0.07, '#eee6d5')
+      for (let offset = 0.5; offset <= 6.2; offset += 0.7) {
         box(x - side * offset, 2.2, z, 0.21, 0.19, 0.21, '#d96b60')
       }
     }
   }
   const train = new THREE.Group()
   town.add(train)
-  const trainBody = keepMaterial(new THREE.MeshStandardMaterial({ color: 0xf4e9dc, roughness: 0.72 }))
-  const trainTrim = keepMaterial(new THREE.MeshStandardMaterial({ color: 0xb68683, roughness: 0.72 }))
-  const trainGlass = keepMaterial(new THREE.MeshStandardMaterial({ color: 0x77909b, roughness: 0.25, metalness: 0.1 }))
+  const trainBody = keepMaterial(toonMaterial({ color: 0xf4e9dc }))
+  const trainTrim = keepMaterial(toonMaterial({ color: 0xb68683 }))
+  const trainGlass = keepMaterial(toonMaterial({ color: 0x77909b }))
   const trainBox = (x: number, y: number, z: number, sx: number, sy: number, sz: number, mat: THREE.Material) => {
     const mesh = new THREE.Mesh(boxGeometry, mat)
     mesh.position.set(x, y, z)
@@ -597,15 +702,15 @@ export function buildTown(scene: THREE.Scene): TownWorld {
   }
 
   // A parked neighborhood bus and bicycles make the street feel inhabited.
-  box(-5.8, 1.45, 8.9, 2.2, 2.7, 4.8, '#c8c6d9')
-  box(-5.8, 2.3, 8.9, 2.23, 0.92, 4.25, '#8aa5ad')
-  box(-4.65, 2.26, 8.9, 0.04, 0.95, 3.75, '#b5d0d2')
-  box(-5.8, 0.54, 8.9, 2.24, 0.12, 4.8, '#817f92')
+  box(-8.7, 1.45, 8.9, 2.2, 2.7, 4.8, '#c8c6d9')
+  box(-8.7, 2.3, 8.9, 2.23, 0.92, 4.25, '#8aa5ad')
+  box(-7.55, 2.26, 8.9, 0.04, 0.95, 3.75, '#b5d0d2')
+  box(-8.7, 0.54, 8.9, 2.24, 0.12, 4.8, '#817f92')
   for (const wheelZ of [7.25, 10.55]) {
-    instance(rings, -4.65, 0.45, wheelZ, 0.65, 0.65, 0.65, '#46515a', pitch)
-    instance(rings, -6.94, 0.45, wheelZ, 0.65, 0.65, 0.65, '#46515a', pitch)
+    instance(rings, -7.55, 0.45, wheelZ, 0.65, 0.65, 0.65, '#46515a', pitch)
+    instance(rings, -9.84, 0.45, wheelZ, 0.65, 0.65, 0.65, '#46515a', pitch)
   }
-  colliders.push(new THREE.Box3(v(-6.95, 0, 6.5), v(-4.65, 2.9, 11.3)))
+  colliders.push(new THREE.Box3(v(-9.85, 0, 6.5), v(-7.55, 2.9, 11.3)))
 
   function bicycle(x: number, z: number, shade: string) {
     for (const wheelZ of [z - 0.48, z + 0.48]) instance(rings, x, 0.45, wheelZ, 0.8, 0.8, 0.8, '#384d56', pitch)
@@ -616,33 +721,97 @@ export function buildTown(scene: THREE.Scene): TownWorld {
     line([x - 0.2, 1.23, z + 0.39], [x + 0.2, 1.23, z + 0.39], 0.035, '#35434a')
     box(x, 1.12, z - 0.08, 0.33, 0.08, 0.15, '#454a4b')
   }
-  bicycle(6.45, 12.4, '#b76372')
-  bicycle(-6.52, -12.8, '#729594')
-  bicycle(6.48, -42, '#c18d60')
-
-  // Layered ridges sit behind the far-bank roofs instead of forming a flat wall at the bridge.
-  for (const [layer, z] of [-145, -160, -177].entries()) {
-    const shape = new THREE.Shape()
-    shape.moveTo(-170, -16)
-    for (let x = -170; x <= 170; x += 2) {
-      const ridge = 5.8 + layer * 1.6
-        + Math.sin(x * 0.026 + layer * 1.9) * 2.1
-        + Math.sin(x * 0.071 - layer * 0.8) * 0.95
-        + Math.sin(x * 0.012 + layer) * 1.4
-        + Math.sin(x * 0.31 + layer) * 0.12
-      shape.lineTo(x, ridge)
+  function pedestrian(x: number, z: number, coat: string, facing = 0) {
+    // Small silhouettes give the street a human scale without adding a
+    // skeletal animation system or blocking the walkable road.
+    const body = 0.26
+    box(x, 0.92, z, body, 0.74, body * 0.72, coat,
+      new THREE.Quaternion().setFromAxisAngle(UP, facing))
+    sphere(x, 1.52, z, 0.18, 0.2, 0.18, '#e8b997')
+    box(x, 0.39, z - 0.08, 0.12, 0.44, 0.12, '#3d4f5b')
+    box(x, 0.39, z + 0.08, 0.12, 0.44, 0.12, '#3d4f5b')
+  }
+  function parkedCar(x: number, z: number, bodyColor: string) {
+    box(x, 0.64, z, 1.42, 0.48, 3.18, bodyColor)
+    box(x, 0.99, z - 0.05, 1.16, 0.34, 1.42, '#7f9ca4')
+    box(x, 0.98, z + 0.08, 1.2, 0.05, 1.5, '#d6e3df')
+    for (const wheelZ of [z - 1.05, z + 1.05]) {
+      instance(rings, x - 0.75, 0.42, wheelZ, 0.31, 0.31, 0.31, '#27363f', pitch)
+      instance(rings, x + 0.75, 0.42, wheelZ, 0.31, 0.31, 0.31, '#27363f', pitch)
     }
-    shape.lineTo(170, -16)
+  }
+  bicycle(8.7, 12.4, '#b76372')
+  bicycle(-8.75, -12.8, '#729594')
+  bicycle(8.7, -42, '#c18d60')
+  bicycle(-8.75, -103.8, '#ad6b74')
+  bicycle(8.7, -117.2, '#738b9e')
+  pedestrian(-7.3, -101.8, '#bf7d83', Math.PI)
+  pedestrian(7.35, -108.2, '#6a8791', 0)
+  pedestrian(-7.3, -116.2, '#d2a36e', Math.PI)
+  pedestrian(7.35, -127.1, '#7b7899', 0)
+  parkedCar(-9.4, -110.8, '#bf837c')
+  parkedCar(9.4, -130.2, '#7c9a98')
+
+  // Ridge silhouettes ring the district. They stay outside the walk and out of the shadow map.
+  const treeGeometry = keepGeometry(new THREE.SphereGeometry(1, 6, 5))
+  function ridgeMesh(seed: number, width: number, height: number, cool: number) {
+    const shape = new THREE.Shape()
+    shape.moveTo(-width, 0)
+    const steps = 14
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps
+      const x = -width + t * width * 2
+      const envelope = Math.sin(t * Math.PI)
+      const jag = 0.42 + hash(seed * 3 + i * 1.9) * 0.7
+      const y = Math.max(1.2, envelope * height * jag + Math.sin(t * 11 + seed) * height * 0.08)
+      shape.lineTo(x, y)
+    }
+    shape.lineTo(width, 0)
     shape.closePath()
-    const geometry = keepGeometry(new THREE.ShapeGeometry(shape))
-    const material = keepMaterial(new THREE.MeshBasicMaterial({
-      color: ['#8baaa7', '#b4c8bc', '#d0ddd0'][layer],
-      side: THREE.DoubleSide, transparent: true, opacity: [0.78, 0.63, 0.54][layer],
-      depthWrite: false, fog: false, toneMapped: false,
-    }))
-    const ridge = new THREE.Mesh(geometry, material)
-    ridge.position.z = z
-    town.add(ridge)
+    const color = new THREE.Color('#6d8f84').lerp(new THREE.Color('#d0deea'), cool)
+    const mesh = new THREE.Mesh(
+      keepGeometry(new THREE.ShapeGeometry(shape)),
+      keepMaterial(new THREE.MeshBasicMaterial({ color, fog: true, toneMapped: false, side: THREE.DoubleSide })),
+    )
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    return mesh
+  }
+  const ridges: { x: number; z: number; width: number; height: number; yaw: number; cool: number; seed: number }[] = [
+    { x: 0, z: -168, width: 78, height: 34, yaw: 0, cool: 0.78, seed: 2 },
+    { x: -36, z: -156, width: 42, height: 22, yaw: 0.08, cool: 0.48, seed: 5 },
+    { x: 40, z: -154, width: 46, height: 24, yaw: -0.06, cool: 0.5, seed: 8 },
+    { x: -8, z: 58, width: 54, height: 20, yaw: Math.PI, cool: 0.62, seed: 11 },
+  ]
+  for (let i = 0; i < 5; i++) {
+    const z = 8 - i * 32
+    ridges.push({ x: 84, z, width: 28, height: 16 + hash(i * 4) * 10, yaw: Math.PI / 2, cool: 0.22 + i * 0.08, seed: 20 + i })
+    ridges.push({ x: -84, z, width: 28, height: 15 + hash(i * 6) * 11, yaw: -Math.PI / 2, cool: 0.22 + i * 0.08, seed: 40 + i })
+  }
+  for (const ridge of ridges) {
+    const mesh = ridgeMesh(ridge.seed, ridge.width, ridge.height, ridge.cool)
+    mesh.position.set(ridge.x, 0, ridge.z)
+    mesh.rotation.y = ridge.yaw
+    town.add(mesh)
+    for (let clump = 0; clump < 5; clump++) {
+      const along = (clump - 2) * ridge.width * 0.28
+      const crown = new THREE.Mesh(
+        treeGeometry,
+        keepMaterial(new THREE.MeshBasicMaterial({
+          color: new THREE.Color(clump % 2 ? '#7f9d86' : '#8f7f96').lerp(new THREE.Color('#c5d4de'), ridge.cool),
+          fog: true, toneMapped: false,
+        })),
+      )
+      crown.position.set(
+        ridge.x + Math.cos(ridge.yaw) * along,
+        2.2 + (clump % 3) * 0.8,
+        ridge.z - Math.sin(ridge.yaw) * along,
+      )
+      crown.scale.set(4.2, 2.6, 4.2)
+      crown.castShadow = false
+      crown.receiveShadow = false
+      town.add(crown)
+    }
   }
 
   function paintedFlowers(): THREE.CanvasTexture {
@@ -705,9 +874,8 @@ export function buildTown(scene: THREE.Scene): TownWorld {
     return texture
   }
 
-  const flowerCardMaterial = keepMaterial(new THREE.MeshLambertMaterial({
-    map: paintedFlowers(), color: 0xffffff, alphaTest: 0.15,
-    side: THREE.DoubleSide, depthWrite: true,
+  const flowerCardMaterial = keepMaterial(toonMaterial({
+    map: paintedFlowers(), soft: true, alphaTest: 0.15, side: THREE.DoubleSide,
   }))
 
   makeInstanced(boxes, boxGeometry, ground, 'Buildings, road, props and shopfronts', true)

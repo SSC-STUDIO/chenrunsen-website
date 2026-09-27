@@ -3,6 +3,8 @@ import { buildTown } from './world'
 import { addTownDetails } from './details'
 import { addStorefrontDetails } from './storefronts'
 import { softenCanopies } from './canopy'
+import { createCelInk } from './toon'
+import { insideDistrict } from './layout'
 
 type Options = {
   onReady?: () => void
@@ -19,11 +21,15 @@ export type TownSceneHandle = {
 }
 
 const STOPS = [
-  { x: 0.4, z: 23, yaw: 0 },
-  { x: 1.5, z: -3, yaw: 0.55 },
-  { x: 0, z: -28, yaw: -0.1 },
-  { x: 0, z: -48, yaw: 0.38 },
-  { x: 0, z: -77, yaw: 0 },
+  // Just before the torii, turned enough that the gate frames the street.
+  { x: -1.8, z: 25.2, yaw: 0.32 },
+  { x: -1.4, z: -1.2, yaw: 0.95 },
+  { x: 2.2, z: -28.2, yaw: -0.55 },
+  { x: 2.4, z: -45.6, yaw: 0.72 },
+  // The river is a transition, not the end of the town. The last stop sits
+  // on the far-bank lane so the player can actually see the second district.
+  // Faces back across the widened river from the far bank.
+  { x: 0.4, z: -106, yaw: Math.PI },
 ]
 const clamp = THREE.MathUtils.clamp
 
@@ -43,28 +49,29 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   const keep = <T extends { dispose(): void }>(resource: T) => { resources.push(resource); return resource }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lite ? 1.15 : 1.3))
   renderer.outputColorSpace = THREE.SRGBColorSpace
-  renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.0
+  renderer.toneMapping = THREE.NoToneMapping
   renderer.shadowMap.enabled = !lite
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
   renderer.shadowMap.autoUpdate = false
   renderer.shadowMap.needsUpdate = true
 
   const scene = new THREE.Scene()
-  scene.fog = new THREE.Fog(0xd4e8e7, 38, 145)
-  const camera = new THREE.PerspectiveCamera(66, 1, 0.1, 350)
+  scene.fog = new THREE.Fog(0xc5dae6, 78, 300)
+  const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 640)
   camera.rotation.order = 'YXZ'
-  camera.position.set(0.4, 1.85, 23)
+  camera.position.set(-1.8, 1.85, 25.2)
 
-  const hemisphere = new THREE.HemisphereLight(0xe9f6ff, 0x929687, 1.5)
-  const sun = new THREE.DirectionalLight(0xffe5c2, 3.0)
-  sun.position.set(-24, 36, 12)
+  const hemisphere = new THREE.HemisphereLight(0xd5e6f6, 0x8d7eaa, 0.82)
+  const sun = new THREE.DirectionalLight(0xffe2b8, 1.22)
+  sun.position.set(-28, 34, 16)
   sun.castShadow = !lite
   sun.shadow.mapSize.set(1536, 1536)
-  Object.assign(sun.shadow.camera, { left: -27, right: 27, top: 35, bottom: -35, near: 1, far: 95 })
+  Object.assign(sun.shadow.camera, { left: -58, right: 58, top: 52, bottom: -52, near: 1, far: 140 })
   sun.shadow.bias = -0.0003
   sun.shadow.normalBias = 0.08
-  scene.add(hemisphere, sun, sun.target)
+  const fill = new THREE.DirectionalLight(0xa9c0e6, 0.46)
+  fill.position.set(32, 18, -24)
+  scene.add(hemisphere, sun, sun.target, fill)
 
   // An unlit sky dome keeps the pastel horizon and cloud whites independent of exposure.
   const skyMaterial = keep(new THREE.ShaderMaterial({
@@ -77,7 +84,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
       float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
       void main(){
         vec3 d=normalize(direction); float h=max(0.,d.y);
-        vec3 day=mix(vec3(.79,.89,.93),vec3(.25,.55,.79),pow(h,.65));
+        vec3 day=mix(vec3(.78,.88,.96),vec3(.20,.46,.88),pow(h,.62));
         vec3 dusk=mix(vec3(.29,.32,.48),vec3(.035,.075,.18),pow(h,.6));
         vec3 color=mix(day,dusk,night);
         vec2 uv=d.xz/max(d.y+.12,.06)*3.+vec2(time*.001,0.);
@@ -92,7 +99,8 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
         gl_FragColor=vec4(color,1.);
       }`,
   }))
-  const sky = new THREE.Mesh(keep(new THREE.SphereGeometry(220, 24, 16)), skyMaterial)
+  const sky = new THREE.Mesh(keep(new THREE.SphereGeometry(420, 24, 16)), skyMaterial)
+  const ink = createCelInk(!lite)
   sky.renderOrder = -1
   scene.add(sky)
 
@@ -110,6 +118,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     storefronts?.dispose()
     world?.dispose()
     details?.dispose()
+    ink.dispose()
     resources.forEach(resource => resource.dispose())
     renderer.dispose()
     console.error('Unable to build sakura town', error)
@@ -138,7 +147,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   petals.frustumCulled = false
   scene.add(petals)
   const petalData = Array.from({ length: petalCount }, (_, i) => ({
-    x: Math.sin(i * 127.1) * 11,
+    x: Math.sin(i * 127.1) * 18,
     y: (i * 1.618) % 12,
     z: (i * 7.731) % 58 - 38,
     speed: 0.45 + (i % 7) * 0.055,
@@ -168,9 +177,11 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   let journey: { from: THREE.Vector3; to: THREE.Vector3; yawFrom: number; yawTo: number; start: number } | null = null
   let wheelVelocity = 0
   const position = camera.position.clone()
-  const dayFog = new THREE.Color(0xd4e8e7), nightFog = new THREE.Color(0x30344d)
-  const daySky = new THREE.Color(0xe9f6ff), nightSky = new THREE.Color(0x809cca)
-  const daySun = new THREE.Color(0xffe5c2), nightSun = new THREE.Color(0xacc8ff)
+  const dayFog = new THREE.Color(0xc5dae6), nightFog = new THREE.Color(0x30344d)
+  const daySky = new THREE.Color(0xd5e6f6), nightSky = new THREE.Color(0x809cca)
+  const dayGround = new THREE.Color(0x8d7eaa), nightGround = new THREE.Color(0x3a3558)
+  const daySun = new THREE.Color(0xffe2b8), nightSun = new THREE.Color(0xacc8ff)
+  const dayFill = new THREE.Color(0xa9c0e6), nightFill = new THREE.Color(0x6e82b8)
 
   const inputFocused = () => {
     const active = document.activeElement as HTMLElement | null
@@ -188,7 +199,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     canvas.dataset.position = `${position.x.toFixed(2)},${position.z.toFixed(2)}`
   }
   const canStand = (x: number, z: number) => {
-    if (x < -24 || x > 24 || z < -82 || z > 27) return false
+    if (!insideDistrict(x, z)) return false
     return !world.colliders.some(box => x > box.min.x - 0.28 && x < box.max.x + 0.28 && z > box.min.z - 0.28 && z < box.max.z + 0.28 && box.min.y < 2 && box.max.y > 0.3)
   }
 
@@ -236,9 +247,10 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   const resize = () => {
     const width = canvas.clientWidth || innerWidth, height = canvas.clientHeight || innerHeight
     camera.aspect = width / height
-    camera.fov = width < height ? 73 : 66
+    camera.fov = width < height ? 70 : 62
     camera.updateProjectionMatrix()
     renderer.setSize(width, height, false)
+    ink.resize(Math.floor(width * renderer.getPixelRatio()), Math.floor(height * renderer.getPixelRatio()))
   }
   const onVisibility = () => {
     hidden = document.hidden
@@ -291,9 +303,12 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     skyMaterial.uniforms.time.value = animateTime
     ;(scene.fog as THREE.Fog).color.copy(dayFog).lerp(nightFog, night)
     hemisphere.color.copy(daySky).lerp(nightSky, night)
-    hemisphere.intensity = THREE.MathUtils.lerp(1.5, 0.7, night)
+    hemisphere.groundColor.copy(dayGround).lerp(nightGround, night)
+    hemisphere.intensity = THREE.MathUtils.lerp(0.82, 0.42, night)
     sun.color.copy(daySun).lerp(nightSun, night)
-    sun.intensity = THREE.MathUtils.lerp(3.0, 0.8, night)
+    sun.intensity = THREE.MathUtils.lerp(1.22, 0.34, night)
+    fill.color.copy(dayFill).lerp(nightFill, night)
+    fill.intensity = THREE.MathUtils.lerp(0.46, 0.18, night)
     // The town and canopy are static. Keep their shadow map until the walk
     // reaches a new section instead of drawing all the branches every frame.
     if (Math.abs(position.z - shadowCenter) > 2.5) {
@@ -305,7 +320,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     world.update(animateTime, night)
     canopies.update(night, canvas.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)))
     updatePetals(animateTime)
-    renderer.render(scene, camera)
+    ink.render(renderer, scene, camera)
     frame = requestAnimationFrame(tick)
   }
 
@@ -335,6 +350,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     storefronts.dispose()
     canopies.dispose()
     sun.shadow.dispose()
+    ink.dispose()
     resources.forEach(resource => resource.dispose())
     renderer.dispose()
   }
@@ -356,7 +372,7 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   canvas.addEventListener('webglcontextrestored', onContextRestored)
   resize()
   updatePetals(0)
-  renderer.render(scene, camera)
+  ink.render(renderer, scene, camera)
   options.onReady?.()
   updateZone()
   frame = requestAnimationFrame(tick)
