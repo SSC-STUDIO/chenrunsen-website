@@ -46,15 +46,21 @@ const skyAt = (phase) => {
 };
 
 /* 阅读进度 s：0 封面，1–5 对应五个乐章开头，6 读完。
-   全程走岛的东侧，躲开屋檐与紫树冠；视线略向下，让水面、灯笼和浮岛留在画面里。 */
+   镜头先去北岸的校园（军训的合唱台、开学第二周的校门、体育课的跑道），
+   再一路向南穿过花园、樱花河、灯笼水乡，最后停在星空浮岛上说那句话。 */
 const PATH = [
   { s: 0, p: [2.0, 6.2, 13.8], l: [1.4, 3.3, -1.2], ph: 0.05 },
-  { s: 1, p: [8.4, 5.8, 6.2], l: [1.2, 1.8, -1.6], ph: 0.2 },
-  { s: 1.7, p: [8.5, 5.7, 1.4], l: [1.6, 1.7, -2.8], ph: 0.5 },
-  { s: 2, p: [9.5, 6.5, -8.0], l: [0.4, 1.5, -15.4], ph: 1.05 },
-  { s: 2.7, p: [9.0, 6.0, -13.5], l: [0.2, 1.6, -17.6], ph: 1.3 },
-  { s: 3, p: [9.5, 6.0, -20.0], l: [0.3, 1.8, -28.0], ph: 2.05 },
-  { s: 3.7, p: [9.0, 6.2, -25.5], l: [0.1, 1.8, -31.6], ph: 2.35 },
+  { s: 0.45, p: [2.4, 6.6, 11.6], l: [1.4, 3.0, -3.4], ph: 0.14 },
+  { s: 0.75, p: [-4.4, 12.4, 5.2], l: [0.8, 2.4, 12.0], ph: 0.24 },
+  { s: 1, p: [1.0, 8.2, 8.0], l: [0.5, 1.7, 20.8], ph: 0.35 },
+  { s: 1.7, p: [0.6, 5.0, 14.4], l: [0.4, 1.9, 21.2], ph: 0.5 },
+  { s: 1.85, p: [7.2, 6.6, 18.6], l: [1.0, 2.0, 24.0], ph: 0.55 },
+  { s: 2, p: [5.4, 7.6, 23.5], l: [0.2, 1.9, 33.4], ph: 0.6 },
+  { s: 2.7, p: [4.6, 7.4, 33.4], l: [0.4, 1.4, 40.5], ph: 0.75 },
+  { s: 2.9, p: [8.0, 11.0, 22.0], l: [2.2, 2.4, 5.0], ph: 1.1 },
+  { s: 3, p: [8.4, 5.8, 6.2], l: [1.2, 1.8, -1.6], ph: 1.35 },
+  { s: 3.4, p: [8.8, 6.0, -3.6], l: [0.6, 1.5, -14.6], ph: 1.7 },
+  { s: 3.7, p: [8.6, 6.6, -17.6], l: [0.3, 1.9, -28.8], ph: 2.15 },
   { s: 4, p: [8.4, 6.9, -31.8], l: [0.2, 3.6, -44.8], ph: 2.75 },
   { s: 4.7, p: [7.2, 6.8, -35.6], l: [0.1, 3.7, -45.4], ph: 2.95 },
   { s: 5, p: [6.6, 6.6, -36.8], l: [0.05, 3.6, -45.2], ph: 3.0 },
@@ -88,6 +94,256 @@ const phaseAlong = (s) => {
   return mix(PATH[k].ph, PATH[k + 1].ph, smooth(0, 1, t));
 };
 
+/* ── 后期管线 ──
+   先渲染到离屏缓冲，再用三个全屏 pass 收尾：
+     1) 墨线  —— 线性深度的二阶差分：凸边着墨、凹边轻描，远景随雾淡出
+     2) 柔光  —— 亮部阈值 + 半分辨率两次可分离高斯，加回灯笼/水晶/月亮/烟花
+     3) 分级  —— 分离色调 + 饱和度 + 高光软膝 + 暗角
+   缓冲是显示空间（sRGB）的 8 位纹理，所以老的自定义 shader 输出色一个都不用改；
+   渲染进 RT 时 three 不再给内置材质做 tone mapping，高光改由分级的软膝接住。 */
+
+const FS_VERT = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+const INK_GLSL = `
+  #include <packing>
+  uniform sampler2D tDepth;
+  uniform vec2 uTexel;
+  uniform float uNear, uFar;
+  uniform vec3 uInk;
+  uniform float uThickness, uSens, uConcave, uConcaveAmount;
+  uniform float uFadeStart, uFadeEnd, uStrength, uSkyDepth, uInkOn;
+
+  float linearDepth(vec2 uv) {
+    float d = texture2D(tDepth, uv).x;
+    return -perspectiveDepthToViewZ(d, uNear, uFar);
+  }
+
+  /* 线性深度的二阶差分：凸边着墨、凹边轻描，远景随雾淡出 */
+  vec3 applyInk(vec3 col, vec2 uv) {
+    if (uInkOn < 0.5) return col;
+    vec2 t = uTexel * uThickness;
+    float dc = linearDepth(uv);
+    if (dc > uSkyDepth) return col;
+    float dl = linearDepth(uv - vec2(t.x, 0.0));
+    float dr = linearDepth(uv + vec2(t.x, 0.0));
+    float du = linearDepth(uv + vec2(0.0, t.y));
+    float dd = linearDepth(uv - vec2(0.0, t.y));
+    float sx = (dl + dr - 2.0 * dc) / dc;
+    float sy = (du + dd - 2.0 * dc) / dc;
+    float convex = max(0.0, sx) + max(0.0, sy);
+    float concave = max(0.0, -sx) + max(0.0, -sy);
+    float edge = smoothstep(uSens * 0.32, uSens, convex);
+    edge = max(edge, smoothstep(uConcave, uConcave * 3.4, concave) * uConcaveAmount);
+    edge *= 1.0 - smoothstep(uFadeStart, uFadeEnd, dc);
+    edge *= uStrength;
+    vec3 line = mix(uInk, col * 0.42, 0.22);
+    return mix(col, line, clamp(edge, 0.0, 1.0));
+  }
+`;
+
+const BRIGHT_FRAG = `
+  uniform sampler2D tDiffuse;
+  uniform vec2 uTexel;
+  uniform float uThreshold, uKnee;
+  varying vec2 vUv;
+  void main() {
+    vec3 c = (texture2D(tDiffuse, vUv + vec2(-uTexel.x, -uTexel.y)).rgb
+            + texture2D(tDiffuse, vUv + vec2( uTexel.x, -uTexel.y)).rgb
+            + texture2D(tDiffuse, vUv + vec2(-uTexel.x,  uTexel.y)).rgb
+            + texture2D(tDiffuse, vUv + vec2( uTexel.x,  uTexel.y)).rgb) * 0.25;
+    float l = max(c.r, max(c.g, c.b));
+    gl_FragColor = vec4(c * smoothstep(uThreshold, uThreshold + uKnee, l), 1.0);
+  }
+`;
+
+const BLUR_FRAG = `
+  uniform sampler2D tDiffuse;
+  uniform vec2 uDir;
+  varying vec2 vUv;
+  void main() {
+    vec3 sum = texture2D(tDiffuse, vUv).rgb * 0.227027;
+    sum += (texture2D(tDiffuse, vUv + uDir * 1.3846).rgb + texture2D(tDiffuse, vUv - uDir * 1.3846).rgb) * 0.3162162;
+    sum += (texture2D(tDiffuse, vUv + uDir * 3.2308).rgb + texture2D(tDiffuse, vUv - uDir * 3.2308).rgb) * 0.0702702;
+    gl_FragColor = vec4(sum, 1.0);
+  }
+`;
+
+const GRADE_FRAG = `
+  uniform sampler2D tDiffuse;
+  uniform sampler2D tBloom;
+  uniform vec3 uShadowTint, uLightTint;
+  uniform float uSaturation, uLift, uVignette, uWarmth, uBloom, uKnee, uRoll;
+  varying vec2 vUv;
+  ${INK_GLSL}
+
+  vec3 softKnee(vec3 c, float knee, float roll) {
+    vec3 over = max(c - vec3(knee), vec3(0.0));
+    return min(c, vec3(knee)) + over / (1.0 + over * roll);
+  }
+
+  void main() {
+    vec3 c = texture2D(tDiffuse, vUv).rgb;
+    c = applyInk(c, vUv);
+    c += texture2D(tBloom, vUv).rgb * uBloom;
+
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    float k = smoothstep(0.02, 0.55, l);
+    c *= mix(uShadowTint, uLightTint, k);
+    c += vec3(uWarmth, uWarmth * 0.45, 0.0) * l * 0.35;
+    c += uLift * (1.0 - k);
+    c = mix(vec3(l), c, uSaturation);
+    c = softKnee(c, uKnee, uRoll);
+
+    float r = length(vUv - 0.5) * 1.42;
+    c *= 1.0 - uVignette * pow(clamp(r, 0.0, 1.0), 2.6);
+    gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+  }
+`;
+
+function createPipeline(THREE, renderer, scene, camera, { pixelBudget = 4.6e6, quality = 1 } = {}) {
+  const rtOpts = {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+    stencilBuffer: false,
+    colorSpace: THREE.SRGBColorSpace,
+  };
+  const noDepth = { ...rtOpts, depthBuffer: false };
+
+  const rtScene = new THREE.WebGLRenderTarget(2, 2, rtOpts);
+  rtScene.depthTexture = new THREE.DepthTexture(2, 2);
+  rtScene.depthTexture.format = THREE.DepthFormat;
+  rtScene.depthTexture.type = THREE.UnsignedIntType;
+  rtScene.depthTexture.minFilter = THREE.NearestFilter;
+  rtScene.depthTexture.magFilter = THREE.NearestFilter;
+
+  const halfOpts = { ...noDepth };
+  const rtHalfA = new THREE.WebGLRenderTarget(2, 2, halfOpts);
+  const rtHalfB = new THREE.WebGLRenderTarget(2, 2, halfOpts);
+
+  const quadScene = new THREE.Scene();
+  const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null);
+  quad.frustumCulled = false;
+  quadScene.add(quad);
+
+  const pass = (frag, uniforms) => new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: FS_VERT,
+    fragmentShader: frag,
+    depthTest: false,
+    depthWrite: false,
+  });
+
+  const inkUniforms = {
+    tDepth: { value: rtScene.depthTexture },
+    uTexel: { value: new THREE.Vector2() },
+    uNear: { value: camera.near },
+    uFar: { value: camera.far },
+    uInk: { value: new THREE.Color(0x33304a) },
+    uThickness: { value: 1.3 },
+    uSens: { value: 0.0052 },
+    uConcave: { value: 0.03 },
+    uConcaveAmount: { value: 0.3 },
+    uFadeStart: { value: 46 },
+    uFadeEnd: { value: 150 },
+    uStrength: { value: 0.72 },
+    uSkyDepth: { value: 420 },
+    uInkOn: { value: 1 },
+  };
+  const brightMat = pass(BRIGHT_FRAG, {
+    tDiffuse: { value: null },
+    uTexel: { value: new THREE.Vector2() },
+    uThreshold: { value: 0.8 },
+    uKnee: { value: 0.24 },
+  });
+  const blurMat = pass(BLUR_FRAG, { tDiffuse: { value: null }, uDir: { value: new THREE.Vector2() } });
+  const gradeMat = pass(GRADE_FRAG, {
+    tDiffuse: { value: null },
+    tBloom: { value: rtHalfA.texture },
+    ...inkUniforms,
+    uShadowTint: { value: new THREE.Color(0.955, 0.95, 1.005) },
+    uLightTint: { value: new THREE.Color(1.0, 0.995, 0.985) },
+    uSaturation: { value: 0.95 },
+    uLift: { value: 0.008 },
+    uVignette: { value: 0.11 },
+    uWarmth: { value: 0.02 },
+    uBloom: { value: 0.5 },
+    uKnee: { value: 0.86 },
+    uRoll: { value: 2.6 },
+  });
+
+  const state = { ink: true, bloom: true, scale: 1, width: 2, height: 2 };
+
+  const draw = (material, target) => {
+    quad.material = material;
+    renderer.setRenderTarget(target);
+    renderer.render(quadScene, quadCam);
+  };
+
+  const setSize = (w, h) => {
+    const dpr = window.devicePixelRatio || 1;
+    let scale = quality < 1 ? 1 : (dpr < 1.5 ? 1.5 : Math.min(dpr, 2));
+    if (w * h * scale * scale > pixelBudget) scale = Math.max(0.85, Math.sqrt(pixelBudget / (w * h)));
+    state.scale = scale;
+    const rw = Math.max(2, Math.floor(w * scale));
+    const rh = Math.max(2, Math.floor(h * scale));
+    state.width = rw;
+    state.height = rh;
+
+    // 画布按 CSS 像素渲染，重建在更高分辨率上做，浏览器缩回去就顺带抗了锯齿
+    renderer.setPixelRatio(1);
+    renderer.setSize(w, h, false);
+    rtScene.setSize(rw, rh);
+    rtHalfA.setSize(Math.max(2, rw >> 1), Math.max(2, rh >> 1));
+    rtHalfB.setSize(Math.max(2, rw >> 1), Math.max(2, rh >> 1));
+
+    inkUniforms.uTexel.value.set(1 / rw, 1 / rh);
+    brightMat.uniforms.uTexel.value.set(2 / rw, 2 / rh);
+    inkUniforms.uNear.value = camera.near;
+    inkUniforms.uFar.value = camera.far;
+    inkUniforms.uThickness.value = 1.05 + 0.45 * scale;
+  };
+
+  const render = () => {
+    renderer.setRenderTarget(rtScene);
+    renderer.clear();
+    renderer.render(scene, camera);
+
+    if (state.bloom) {
+      const hx = 1 / Math.max(2, state.width >> 1);
+      const hy = 1 / Math.max(2, state.height >> 1);
+      brightMat.uniforms.tDiffuse.value = rtScene.texture;
+      draw(brightMat, rtHalfA);
+      blurMat.uniforms.tDiffuse.value = rtHalfA.texture;
+      blurMat.uniforms.uDir.value.set(hx, 0);
+      draw(blurMat, rtHalfB);
+      blurMat.uniforms.tDiffuse.value = rtHalfB.texture;
+      blurMat.uniforms.uDir.value.set(0, hy);
+      draw(blurMat, rtHalfA);
+    }
+    inkUniforms.uInkOn.value = state.ink ? 1 : 0;
+    gradeMat.uniforms.tDiffuse.value = rtScene.texture;
+    gradeMat.uniforms.uBloom.value = state.bloom ? 0.5 : 0;
+    draw(gradeMat, null);
+    renderer.setRenderTarget(null);
+  };
+
+  const dispose = () => {
+    [rtScene, rtHalfA, rtHalfB].forEach((rt) => rt.dispose());
+    [brightMat, blurMat, gradeMat].forEach((m) => m.dispose());
+    quad.geometry.dispose();
+  };
+
+  return { state, gradeMat, brightMat, inkUniforms, setSize, render, dispose };
+}
+
 export async function mountIsland(canvas, { reduced = false } = {}) {
   if (!canvas) return null;
   let THREE;
@@ -113,13 +369,49 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
     || mobile
     || (navigator.deviceMemory && navigator.deviceMemory <= 4)
     || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4);
+  /* 三条随机流，互不干扰：
+     rng  —— 布局：地形、房子、摆件。lite 与 full 必须逐块一致，否则手机和电脑是两个世界。
+     detailRng —— 细节：星屑、花瓣、萤火，可以按机型少画一点，不影响世界本身。
+     localRng(x,z) —— 一棵树/一座浮岛自己的流，改它的密度不会挪动别的树。 */
   const rng = mulberry32(20260925);
-  const R = (a, b) => a + (b - a) * rng();
-  const pick = (list) => list[Math.floor(rng() * list.length)];
+  const detailRng = mulberry32(0x5eed1a7e);
+  let activeRng = rng;
+  const R = (a, b) => a + (b - a) * activeRng();
+  const pick = (list) => list[Math.floor(activeRng() * list.length)];
+  const localRng = (x, z, salt = 0) => {
+    let h = (Math.imul(Math.round(x * 64) | 0, 0x27d4eb2d)
+      ^ Math.imul(Math.round(z * 64) | 0, 0x165667b1)
+      ^ Math.imul(salt | 0, 0x9e3779b1)) | 0;
+    return () => {
+      h = (h + 0x6d2b79f5) | 0;
+      let t = Math.imul(h ^ (h >>> 15), 1 | h);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
 
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0xffffff, 0.018);
   const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 620);
+
+  /* 离屏管线；构造失败就退回直画布，画面照旧只是没有墨线与柔光 */
+  let pipeline = null;
+  try {
+    pipeline = createPipeline(THREE, renderer, scene, camera, {
+      pixelBudget: lite ? 2.2e6 : 4.6e6,
+      quality: lite ? 1 : 1.5,
+    });
+    pipeline.state.ink = !reduced;
+    pipeline.state.bloom = !lite && !reduced;
+    renderer.toneMapping = THREE.NoToneMapping;
+  } catch {
+    pipeline = null;
+    renderer.toneMapping = THREE.NeutralToneMapping;
+  }
+  const renderFrame = () => {
+    if (pipeline) pipeline.render();
+    else renderer.render(scene, camera);
+  };
   const display = (rgb, target = new THREE.Color()) => target.setRGB(rgb[0], rgb[1], rgb[2], THREE.SRGBColorSpace);
 
   /* ── 收集方块，最后一次性做成实例网格 ── */
@@ -209,19 +501,24 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
     box(x + 0.34 * size, baseY + trunkH * 0.86, z, 0.5 * size, 0.14 * size, 0.14 * size, '#6e4a31');
     box(x - 0.3 * size, baseY + trunkH * 0.96, z + 0.1, 0.42 * size, 0.12 * size, 0.12 * size, '#7c5538');
     const cy = baseY + trunkH + 0.55 * size;
-    const n = Math.round(48 * size * size * (lite ? 0.7 : 1));
+    const lr = localRng(x, z, 11);
+    const lR = (a, b) => a + (b - a) * lr();
+    const lpick = (list) => list[Math.floor(lr() * list.length)];
+    const n = Math.round(48 * size * size);
     for (let i = 0; i < n; i++) {
       let u;
       let v;
       let w;
       do {
-        u = R(-1, 1);
-        v = R(-1, 1);
-        w = R(-1, 1);
+        u = lR(-1, 1);
+        v = lR(-1, 1);
+        w = lR(-1, 1);
       } while (u * u + v * v + w * w > 1);
-      const s = R(0.32, 0.5) * size;
-      const roll = rng();
-      const color = roll < 0.14 ? palette.light : roll < 0.26 ? palette.deep : pick(palette.main);
+      const s = lR(0.32, 0.5) * size;
+      const roll = lr();
+      const color = roll < 0.14 ? palette.light : roll < 0.26 ? palette.deep : lpick(palette.main);
+      /* lite 只少画花簇，不动随机流，树形与位置和桌面完全一致 */
+      if (lite && i % 3 === 2) continue;
       box(x + u * 1.25 * size, cy + v * 0.72 * size, z + w * 1.25 * size, s, s * 0.9, s, color, 0.05);
     }
     hot('tree', x, cy, z, 1.3 * size, 0.95 * size, 1.3 * size, { tint: [1, 0.72, 0.8] });
@@ -652,25 +949,33 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
     box(x + 0.6, y + 2.0, z, 0.9, 0.18, 0.18, '#3b2a3a', 0.04);
     box(x - 0.55, y + 2.2, z + 0.2, 0.8, 0.16, 0.16, '#33243a', 0.04);
     const cy = y + 2.8 * size;
-    const n = Math.round(112 * size * (lite ? 0.7 : 0.85));
+    const lr = localRng(x, z, 23);
+    const lR = (a, b) => a + (b - a) * lr();
+    const lpick = (list) => list[Math.floor(lr() * list.length)];
+    const n = Math.round(112 * size * 0.85);
     for (let i = 0; i < n; i++) {
       let u;
       let v;
       let w;
       do {
-        u = R(-1, 1);
-        v = R(-1, 1);
-        w = R(-1, 1);
+        u = lR(-1, 1);
+        v = lR(-1, 1);
+        w = lR(-1, 1);
       } while (u * u + v * v + w * w > 1);
       const radial = Math.min(1, Math.hypot(u, w));
       const density = 0.55 + (1 - radial) * 0.45;
-      if (rng() > density) continue;
-      const s = R(0.22, 0.4) * size * (1.04 - radial * 0.2);
+      const keep = lr() <= density;
+      const s = lR(0.22, 0.4) * size * (1.04 - radial * 0.2);
       const px = x + u * 1.8 * size;
       const py = cy + v * 0.95 * size;
       const pz = z + w * 1.8 * size;
-      if (rng() < 0.2) gbox('magic', px, py, pz, s, s * 0.9, s, pick(['#c090ff', '#d6a8ff', '#a878f0']));
-      else box(px, py, pz, s, s * 0.9, s, pick(['#8a4fd6', '#9e62e6', '#b07af0', '#6f3cc0']), 0.05);
+      const magic = lr() < 0.2;
+      const magicColor = lpick(['#c090ff', '#d6a8ff', '#a878f0']);
+      const leafColor = lpick(['#8a4fd6', '#9e62e6', '#b07af0', '#6f3cc0']);
+      if (!keep) continue;
+      if (lite && i % 3 === 2) continue;
+      if (magic) gbox('magic', px, py, pz, s, s * 0.9, s, magicColor);
+      else box(px, py, pz, s, s * 0.9, s, leafColor, 0.05);
     }
     for (let i = 0; i < 10; i++) {
       const a = (i / 10) * Math.PI * 2 + R(-0.2, 0.2);
@@ -784,6 +1089,201 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
       }
     });
 
+  /* ── 戊 · 北岸「杨思校园」：军训合唱的操场、开学第二周见的校门、每节体育课一起走的跑道 ──
+     这一块放在最后搭，前面的随机流一格没动，小岛还是原来那座小岛。 */
+  const CAMPUS = { z0: 16, z1: 46, half: 12, mid: 31, gateZ: 33, stageZ: 21.5, trackZ: 40 };
+  const trackR = { x: 8.6, z: 5.6 };
+  const trackRing = (x, z) => {
+    const d = Math.hypot((x - 0) / trackR.x, (z - CAMPUS.trackZ) / trackR.z);
+    return d > 0.74 && d < 1.0;
+  };
+  /* 泥土底座整块一块，表层按 1 米铺，省下两千个方块 */
+  box(0, -0.62, (CAMPUS.z0 + CAMPUS.z1) / 2, 25.5, 1.8, CAMPUS.z1 - CAMPUS.z0 + 1.2, '#6f5544', 0.02);
+  const CAMPUS_GRASS = ['#a9d47c', '#9ecb72', '#b2da86', '#a3cf78'];
+  const CAMPUS_PAVE = ['#c9c3b6', '#bdb7aa', '#d2ccc0'];
+  const TRACK = ['#c8665c', '#bd5d54', '#d07066'];
+  const PLAZA = ['#b9b3a6', '#c4beb1', '#aea89c'];
+  for (let x = -12; x < 12; x += 1) {
+    for (let z = CAMPUS.z0; z < CAMPUS.z1; z += 1) {
+      const onTrack = trackRing(x + 0.5, z + 0.5);
+      const inField = Math.hypot((x + 0.5) / trackR.x, (z + 0.5 - CAMPUS.trackZ) / trackR.z) <= 0.74;
+      const onRoad = Math.abs(x + 0.5) < 2 && z > CAMPUS.gateZ + 1;
+      const onPlaza = Math.abs(x + 0.5) < 8 && z > CAMPUS.z0 + 1 && z < CAMPUS.stageZ + 3;
+      let color;
+      if (onTrack) color = pick(TRACK);
+      else if (inField) color = pick(CAMPUS_GRASS);
+      else if (onRoad) color = pick(PLAZA);
+      else if (onPlaza) color = pick(CAMPUS_PAVE);
+      else color = pick(CAMPUS_GRASS);
+      const top = 0.5 + ((x * 3 + z * 5) % 3) * 0.012;
+      box(x + 0.5, top / 2, z + 0.5, 1, top, 1, color, 0.06);
+    }
+  }
+  /* 跑道白线 */
+  for (let a = 0; a < Math.PI * 2; a += 0.02) {
+    const lx = Math.cos(a) * trackR.x * 0.86;
+    const lz = CAMPUS.trackZ + Math.sin(a) * trackR.z * 0.86;
+    box(lx, 0.53, lz, 0.14, 0.06, 0.14, '#f2ece0', 0);
+  }
+  /* 与主岛之间的一段木栈道 */
+  for (let z = 6.6; z <= CAMPUS.z0; z += 0.62) {
+    const sag = Math.sin(((z - 6.6) / (CAMPUS.z0 - 6.6)) * Math.PI) * 0.12;
+    box(0.4, 0.62 + sag, z, 3.0, 0.14, 0.52, '#b08a58', 0.03);
+    box(0.4, 0.36 + sag, z, 3.0, 0.1, 0.12, '#8f6f46', 0.02);
+  }
+  for (let z = 7.0; z <= CAMPUS.z0; z += 1.9) {
+    box(-1.05, 0.34, z, 0.16, 1.3, 0.16, '#8f6f46', 0.02);
+    box(1.85, 0.34, z, 0.16, 1.3, 0.16, '#8f6f46', 0.02);
+  }
+  /* 校门口：两根门柱 + 横梁 + 校名牌 */
+  const textTexture = (lines, opts = {}) => {
+    const { w = 640, h = 256, bg = '#f3ece0', color = '#3c4a55', font = '700 120px "Songti SC","Noto Serif SC",serif', frame = '#8a7a62' } = opts;
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d');
+    g.fillStyle = bg;
+    g.fillRect(0, 0, w, h);
+    if (frame) {
+      g.strokeStyle = frame;
+      g.lineWidth = 10;
+      g.strokeRect(5, 5, w - 10, h - 10);
+    }
+    g.fillStyle = color;
+    g.font = font;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    const step = h / (lines.length + 1);
+    lines.forEach((t, i) => g.fillText(t, w / 2, step * (i + 1)));
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    return tex;
+  };
+  const plate = (tex, w, h, x, y, z, rotY = Math.PI) => {
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, h),
+      new THREE.MeshBasicMaterial({ map: tex, toneMapped: false })
+    );
+    mesh.position.set(x, y, z);
+    mesh.rotation.y = rotY;
+    scene.add(mesh);
+    return mesh;
+  };
+  const gateX = 3.1;
+  [-1, 1].forEach((side) => {
+    box(side * gateX, 1.75, CAMPUS.gateZ, 1.1, 3.5, 1.1, '#e6dcc4', 0.04);
+    box(side * gateX, 3.62, CAMPUS.gateZ, 1.5, 0.34, 1.5, '#8a755c', 0.04);
+    box(side * gateX, 0.3, CAMPUS.gateZ, 1.8, 0.6, 1.8, '#b9a98c', 0.04);
+  });
+  box(0, 3.42, CAMPUS.gateZ, gateX * 2 + 1.3, 0.62, 0.9, '#cbb896', 0.04);
+  box(0, 3.05, CAMPUS.gateZ, gateX * 2 + 1.3, 0.2, 1.05, '#a48c6c', 0.03);
+  plate(textTexture(['上海 · 杨思高级中学']), 6.6, 1.5, 0, 2.42, CAMPUS.gateZ - 0.6);
+  hot('gate', 0, 2.5, CAMPUS.gateZ, 5.4, 1.6, 0.9);
+  /* 合唱台：木台、黑板、麦克风、音箱、台下坐着的一排排同学 */
+  const SHIRTS = ['#dfe3ea', '#c9d6c0', '#e6d6c0', '#cfd0e6', '#e2cdd8', '#d5e2e6'];
+  const voxelPerson = (x, y, z, shirt, hair = '#2c2622', h = 1.0) => {
+    box(x, y + h * 0.16, z, 0.34, h * 0.3, 0.26, '#4a4550', 0.03);
+    box(x, y + h * 0.5, z, 0.42, h * 0.42, 0.3, shirt, 0.04);
+    box(x, y + h * 0.84, z, 0.32, h * 0.3, 0.3, '#f0d2b6', 0.03);
+    box(x, y + h * 0.99, z, 0.36, h * 0.14, 0.34, hair, 0.03);
+  };
+  box(0.4, 0.68, CAMPUS.stageZ, 10.4, 0.5, 4.6, '#a9835a', 0.03);
+  box(0.4, 0.45, CAMPUS.stageZ, 10.8, 0.24, 5.0, '#8b6a48', 0.03);
+  box(0.4, 1.5, CAMPUS.stageZ + 2.5, 10.4, 2.0, 0.3, '#8f6f4c', 0.04);
+  const boardPlate = plate(textTexture(['说了再见'], { w: 768, h: 320, bg: '#2b3a36', color: '#f4efe2', frame: '#7a6242' }), 5.4, 2.25, 0.4, 2.0, CAMPUS.stageZ + 2.3);
+  hot('blackboard', 0.4, 2.0, CAMPUS.stageZ + 2.3, 3.0, 1.3, 0.5);
+  [-4.4, 5.2].forEach((x) => {
+    box(x, 1.85, CAMPUS.stageZ + 2.1, 1.2, 2.3, 1.0, '#3b3a42', 0.03);
+    box(x, 3.15, CAMPUS.stageZ + 2.1, 1.34, 0.24, 1.1, '#2b2a31', 0.03);
+  });
+  /* 舞台灯：暖光柱，夜里也会亮 */
+  [-5.2, 6.0].forEach((x) => {
+    box(x, 2.5, CAMPUS.stageZ + 1.2, 0.2, 3.4, 0.2, '#4a4450', 0.02);
+    gbox('warm', x, 4.25, CAMPUS.stageZ + 1.0, 0.5, 0.5, 0.5, '#ffe6b0');
+    halo(x, 4.25, CAMPUS.stageZ + 1.0, 2.2, 2.2, '#ffd98a', 0.8, 0.7, 0);
+  });
+  /* 麦克风架：那天他一个人站在这里 */
+  box(0.4, 1.3, CAMPUS.stageZ - 0.7, 0.12, 1.3, 0.12, '#3a3742', 0.02);
+  box(0.4, 1.98, CAMPUS.stageZ - 0.7, 0.24, 0.26, 0.24, '#c8a0a8', 0.02);
+  box(0.4, 0.78, CAMPUS.stageZ - 0.7, 0.7, 0.1, 0.7, '#3a3742', 0.02);
+  hot('microphone', 0.4, 1.7, CAMPUS.stageZ - 0.7, 0.5, 0.7, 0.5);
+  /* 台下的同学：三排，坐得比站着的人矮一半 */
+  for (let row = 0; row < 3; row++) {
+    for (let i = 0; i < 9; i++) {
+      const x = -6.4 + i * 1.6;
+      const z = CAMPUS.z0 + 1.6 + row * 1.5;
+      if (Math.abs(x - 0.4) < 1.4) continue;
+      voxelPerson(x, 0.5, z, pick(SHIRTS), pick(['#2c2622', '#3a2c24', '#241f22']), 0.72);
+    }
+  }
+  /* 操场：看台、单双杠、角落的树 */
+  for (let i = 0; i < 4; i++) {
+    box(10.4, 0.5 + i * 0.38, CAMPUS.trackZ, 2.6, 0.38, 9.0 - i * 0.4, i % 2 ? '#c9c3b6' : '#d6d0c3', 0.04);
+  }
+  [-8.6, 8.6].forEach((x) => {
+    box(x, 1.0, CAMPUS.trackZ - 6.6, 0.18, 2.0, 0.18, '#cfd3d6', 0.02);
+    box(x + 0.9, 0.62, CAMPUS.trackZ - 6.2, 0.18, 1.3, 0.18, '#cfd3d6', 0.02);
+    box(x + 0.45, 1.55, CAMPUS.trackZ - 6.4, 1.1, 0.14, 0.16, '#b9bec2', 0.02);
+  });
+  sakura(-10.6, CAMPUS.z0 + 2.2, 1.15, PINK_CREAM);
+  sakura(10.8, CAMPUS.z0 + 3.4, 1.0, PINK_JP);
+  sakura(-10.4, CAMPUS.z1 - 3.2, 1.25, PINK_CREAM);
+  for (let i = 0; i < 26; i++) {
+    const x = R(-11.4, 11.4);
+    const z = R(CAMPUS.z0 + 0.6, CAMPUS.z1 - 1.2);
+    if (trackRing(x, z) || Math.abs(x) < 2.4) continue;
+    if (rng() < 0.5) flowerCluster(x, z, pick(flowerKinds), 0.5);
+    else box(x, 0.62, z, 0.3, 0.24, 0.3, pick(['#8fc46a', '#9ed075', '#7fb85e']), 0.06);
+  }
+  /* 飞过的鸟：一个实例网格，两只翅膀 */
+  const birdMat = new THREE.MeshBasicMaterial({ color: 0x5a5468 });
+  const birdGeo = new THREE.BoxGeometry(0.55, 0.07, 0.17);
+  const birdMesh = new THREE.InstancedMesh(birdGeo, birdMat, 18);
+  birdMesh.frustumCulled = false;
+  scene.add(birdMesh);
+
+  /* 台上的两个人：他先站着，她按下「一起把这首唱完」才从台下走上来 */
+  const actor = (cloth, hair, skirt = false) => {
+    const g = new THREE.Group();
+    const add = (w, h, d, y, z, c) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ color: c }));
+      m.position.set(0, y, z);
+      g.add(m);
+      return m;
+    };
+    add(0.42, 0.24, 0.3, 0.12, 0, 0x4a4550);
+    add(skirt ? 0.5 : 0.44, 0.5, 0.32, 0.48, 0, cloth);
+    add(0.34, 0.34, 0.32, 0.9, 0, 0xf0d2b6);
+    add(0.38, 0.16, 0.36, 1.12, 0, hair);
+    if (skirt) add(0.3, 0.32, 0.08, 0.84, 0.19, hair);
+    g.traverse((o) => { if (o.isMesh) { o.castShadow = !lite; o.receiveShadow = !lite; } });
+    scene.add(g);
+    return g;
+  };
+  const stageHim = actor(0x3d4a6a, 0x221c1a);
+  stageHim.position.set(0.4, 0.93, CAMPUS.stageZ - 0.7);
+  const stageHer = actor(0xf2a7bc, 0x3a2626, true);
+  stageHer.position.set(-3.4, 0.5, CAMPUS.z0 + 3.2);
+  stageHer.visible = false;
+  /* 跑道上的两个人：每节体育课一起走的那两个 */
+  const trackHim = actor(0x46587a, 0x2a2320);
+  const trackHer = actor(0xe8a8bc, 0x3a2626, true);
+  trackHim.visible = false;
+  trackHer.visible = false;
+
+  /* 飞过的鸟 */
+  const birdCfg = Array.from({ length: 9 }, (_, i) => ({
+    phase: (i * 2.17) % (Math.PI * 2),
+    r: 14 + (i % 3) * 4.5,
+    y: 13 + (i % 4) * 1.4,
+    speed: 0.16 + (i % 4) * 0.03,
+    cx: i % 2 ? 4 : -3,
+    cz: i % 2 ? CAMPUS.z1 - 6 : CAMPUS.z0 + 6,
+  }));
+  const birdDummy = new THREE.Object3D();
+  let birdT = 0;
+
   /* ── 做成实例网格：共用一张颗粒纹理，局部坐标采样，避免世界缩放拉成条纹 ── */
   const cube = new THREE.BoxGeometry(1, 1, 1);
   const tmpMatrix = new THREE.Matrix4();
@@ -868,7 +1368,22 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
     scene.add(mesh);
     return mesh;
   };
-  instanced(lit, withGrain(new THREE.MeshLambertMaterial({ color: 0xffffff }), 0.14, true));
+  /* 分区：镜头往往只看着岛的一角，切成四块才能真正剔掉看不见的部分 */
+  const REGIONS = ['campus', 'garden', 'town', 'stars'];
+  const regionOf = (z) => (z > 8 ? 'campus' : z > -6 ? 'garden' : z > -34.5 ? 'town' : 'stars');
+  const litMat = withGrain(new THREE.MeshLambertMaterial({ color: 0xffffff }), 0.14, true);
+  const litBuckets = { campus: [], garden: [], town: [], stars: [] };
+  for (const b of lit) litBuckets[regionOf(b[2])].push(b);
+  for (const id of REGIONS) {
+    const list = litBuckets[id];
+    if (!list.length) continue;
+    const mesh = instanced(list, litMat);
+    /* InstancedMesh 的包围球按实例算，所以这里可以放心打开剔除 */
+    mesh.frustumCulled = true;
+    mesh.castShadow = !lite;
+    mesh.receiveShadow = !lite;
+    mesh.name = `lit-${id}`;
+  }
   const warmMat = withGrain(new THREE.MeshBasicMaterial({ color: 0xffffff }), 0.06);
   const magicMat = withGrain(new THREE.MeshBasicMaterial({ color: 0xffffff }), 0.07);
   instanced(glow.warm, warmMat);
@@ -936,38 +1451,43 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
   sky.renderOrder = -2;
   scene.add(sky);
 
-  const starCount = lite ? 700 : 1600;
+  /* 世界搭完了：从这里开始换成细节流，星屑花瓣的多少不再影响布局 */
+  activeRng = detailRng;
+
+  const starCount = 1600;
+  const starRng = mulberry32(0x5741a2);
   const starPos = new Float32Array(starCount * 3);
   const starSeed = new Float32Array(starCount * 2);
   for (let i = 0; i < starCount; i++) {
-    const theta = rng() * Math.PI * 2;
-    const y = rng() * 0.95 + 0.04;
+    const theta = starRng() * Math.PI * 2;
+    const y = starRng() * 0.95 + 0.04;
     const ring = Math.sqrt(1 - y * y);
-    const radius = 150 + rng() * 30;
+    const radius = 150 + starRng() * 30;
     starPos[i * 3] = Math.cos(theta) * ring * radius;
     starPos[i * 3 + 1] = y * radius - 8;
     starPos[i * 3 + 2] = Math.sin(theta) * ring * radius - 30;
-    starSeed[i * 2] = rng() * 6.28;
-    starSeed[i * 2 + 1] = rng() < 0.07 ? 2.6 + rng() * 1.8 : 0.7 + rng() * 1.2;
+    starSeed[i * 2] = starRng() * 6.28;
+    starSeed[i * 2 + 1] = starRng() < 0.07 ? 2.6 + starRng() * 1.8 : 0.7 + starRng() * 1.2;
   }
   const starGeo = new THREE.BufferGeometry();
   starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
   starGeo.setAttribute('aSeed', new THREE.BufferAttribute(starSeed, 2));
+  starGeo.setDrawRange(0, lite ? 700 : starCount);
   const stars = new THREE.Points(starGeo, new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     fog: false,
     blending: THREE.AdditiveBlending,
-    uniforms: { uTime: { value: 0 }, uNight: { value: 0 } },
+    uniforms: { uTime: { value: 0 }, uNight: { value: 0 }, uPix: { value: 1 } },
     vertexShader: `
       attribute vec2 aSeed;
-      uniform float uTime, uNight;
+      uniform float uTime, uNight, uPix;
       varying float vA;
       void main() {
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         float tw = 0.5 + 0.5 * sin(uTime * (0.7 + aSeed.y * 0.2) + aSeed.x);
         vA = (0.35 + 0.65 * tw) * uNight;
-        gl_PointSize = aSeed.y * (0.6 + 0.4 * tw) * 2.2;
+        gl_PointSize = aSeed.y * (0.6 + 0.4 * tw) * 2.2 * uPix;
         gl_Position = projectionMatrix * mv;
       }
     `,
@@ -1040,16 +1560,33 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
   const cloudMat = withGrain(new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.92 }), 0.08, true);
   const clouds = instanced(cloudList, cloudMat);
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.18));
+  const ambient = new THREE.AmbientLight(0xffffff, 0.18);
+  scene.add(ambient);
   const sun = new THREE.DirectionalLight(0xffffff, 1.4);
   scene.add(sun);
   scene.add(sun.target);
   const hemi = new THREE.HemisphereLight(0xffffff, 0xffffff, 1.0);
   scene.add(hemi);
 
+  /* 桌面给主光一张小阴影贴图：方块之间终于有真实的遮挡关系，手机端直接关掉 */
+  if (!lite) {
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 90;
+    sun.shadow.camera.left = -17;
+    sun.shadow.camera.right = 17;
+    sun.shadow.camera.top = 17;
+    sun.shadow.camera.bottom = -17;
+    sun.shadow.bias = -0.0016;
+    sun.shadow.normalBias = 0.06;
+  }
+
   /* ── 水面：大到雾里看不见边；细涟漪 + 软高光；四区颜色保留 ── */
   const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(420, 480, 1, 1),
+    new THREE.PlaneGeometry(420, 480, lite ? 1 : 48, lite ? 1 : 48),
     new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
@@ -1057,16 +1594,22 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
         uTime: { value: 0 },
         uNight: { value: 0 },
         uLamp: { value: 0 },
+        uWaveAmp: { value: lite ? 0 : 0.075 },
         uSky: { value: new THREE.Vector3() },
         uFog: { value: new THREE.Vector3() },
         uFogDensity: { value: 0.02 },
         uGrain: { value: grainTex },
       },
       vertexShader: `
+        uniform float uTime, uWaveAmp;
         varying vec3 vWorld;
         varying float vDist;
         void main() {
           vec4 w = modelMatrix * vec4(position, 1.0);
+          /* 起伏：给她看的不是平面照片，水面真的在动 */
+          w.y += (sin(w.x * 0.26 + uTime * 1.05) * 0.5
+                + sin(w.z * 0.31 - uTime * 0.86) * 0.42
+                + sin((w.x + w.z) * 0.55 + uTime * 1.6) * 0.2) * uWaveAmp;
           vWorld = w.xyz;
           vec4 mv = viewMatrix * w;
           vDist = -mv.z;
@@ -1539,6 +2082,7 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
       group.add(back);
     }
     group.position.set(x, islandTop, z);
+    group.traverse((o) => { if (o.isMesh) { o.castShadow = !lite; o.receiveShadow = !lite; } });
     scene.add(group);
     return group;
   };
@@ -1567,7 +2111,7 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
   };
 
   /* ── 尺寸与画质 ── */
-  let pixelRatio = Math.min(lite ? 1 : 1.5, window.devicePixelRatio || 1);
+  let renderScale = lite ? 1 : Math.min(1.5, window.devicePixelRatio || 1);
   const resize = () => {
     const w = canvas.clientWidth || window.innerWidth;
     const h = canvas.clientHeight || window.innerHeight;
@@ -1575,10 +2119,16 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
     camera.aspect = w / h;
     camera.fov = w / h < 0.8 ? 58 : 46;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(pixelRatio);
-    renderer.setSize(w, h, false);
-    const proj = (h * pixelRatio) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+    if (pipeline) {
+      pipeline.setSize(w, h);
+      renderScale = pipeline.state.scale;
+    } else {
+      renderer.setPixelRatio(renderScale);
+      renderer.setSize(w, h, false);
+    }
+    const proj = (h * renderScale) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
     flyUniforms.uPixel.value = proj;
+    stars.material.uniforms.uPix.value = renderScale;
     smokes.forEach((mat) => { mat.uniforms.uPixel.value = proj; });
   };
   resize();
@@ -1603,6 +2153,12 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
   let nextShooting = 3;
   let slowFrames = 0;
   let sampled = 0;
+  let harmony = 0;
+  let harmonyOn = false;
+  let trackOn = false;
+  let shotMode = false;
+  let walkT = 0;
+  let blackboardGlow = 0;
   const camPos = new THREE.Vector3(0, 8, -24);
   const camLook = new THREE.Vector3(...MOON_POS);
   const wantPos = new THREE.Vector3();
@@ -1640,8 +2196,13 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
     const dayDir = new THREE.Vector3(-0.5, 0.75, 0.42);
     const duskDir = new THREE.Vector3(-0.6, 0.28, -0.75);
     const dir = phase < 2 ? dayDir.clone().lerp(duskDir, smooth(1.2, 2.0, phase)) : duskDir.clone().lerp(nightDir, smooth(2.0, 2.9, phase));
-    sun.position.copy(camLook).addScaledVector(dir.normalize(), 30);
+    dir.normalize();
+    sun.position.copy(camLook).addScaledVector(dir, 30);
     sun.target.position.copy(camLook);
+    sun.target.updateMatrixWorld();
+    /* 天上画的那个太阳，和真正打光的方向必须是同一个 */
+    sky.material.uniforms.uSun.value.copy(dir);
+    ambient.intensity = 0.16 + day * 0.12 + night * 0.05;
     display(env.hs, hemi.color);
     display(env.hg, hemi.groundColor);
     hemi.intensity = env.hI;
@@ -1675,6 +2236,7 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
   };
 
   const pickTarget = () => {
+    if (shotMode) return phase;
     if (mode === 'moon') {
       const a = clock * 0.08;
       wantPos.set(Math.sin(a) * 4, 6.6 + Math.sin(clock * 0.25) * 0.3, -26 + Math.cos(a) * 3);
@@ -1745,6 +2307,57 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
     her.position.x = 0.42 - yesT * 0.26;
     him.rotation.y = yesT * 0.35;
     her.rotation.y = -yesT * 0.35;
+
+    /* 她说「我陪你」：从台下走到麦克风旁边 */
+    if (harmonyOn && harmony < 1) {
+      harmony = Math.min(1, harmony + dt * 0.34);
+      const k = smooth(0, 1, harmony);
+      stageHer.visible = true;
+      stageHer.position.set(
+        mix(-3.4, -0.55, k),
+        mix(0.5, 0.93, smooth(0.3, 1, k)),
+        mix(CAMPUS.z0 + 3.2, CAMPUS.stageZ - 0.5, k)
+      );
+    }
+    /* 黑板被点到时会亮一下，像有人刚写下那四个字 */
+    if (blackboardGlow > 0.001) {
+      blackboardGlow *= Math.exp(-dt * 1.3);
+      boardPlate.material.color.setScalar(1 + blackboardGlow * 0.85);
+    }
+    /* 体育课：两个人在跑道上走圈，只有在那一章附近才算 */
+    const peActive = trackOn || (mode === 'story' && story > 1.5 && story < 3.05);
+    trackHim.visible = peActive;
+    trackHer.visible = peActive;
+    if (peActive) {
+      walkT += dt * 0.15;
+      const rx = trackR.x * 0.86;
+      const rz = trackR.z * 0.86;
+      const px = Math.cos(walkT) * rx;
+      const pz = CAMPUS.trackZ + Math.sin(walkT) * rz;
+      const px2 = Math.cos(walkT + 0.06) * rx;
+      const pz2 = CAMPUS.trackZ + Math.sin(walkT + 0.06) * rz;
+      trackHim.position.set(px, 0.53, pz);
+      trackHer.position.set(px2 * 0.985, 0.53, CAMPUS.trackZ + (pz2 - CAMPUS.trackZ) * 0.985);
+      trackHim.rotation.y = -walkT;
+      trackHer.rotation.y = -walkT;
+    }
+    /* 飞过的鸟 */
+    birdT += dt;
+    for (let i = 0; i < birdCfg.length; i++) {
+      const b = birdCfg[i];
+      const a = b.phase + birdT * b.speed;
+      const bx = b.cx + Math.cos(a) * b.r;
+      const bz = b.cz + Math.sin(a) * b.r;
+      const by = b.y + Math.sin(birdT * 0.9 + b.phase) * 0.4;
+      const flap = 0.3 + Math.sin(birdT * 6.5 + b.phase) * 0.35;
+      for (let w = 0; w < 2; w++) {
+        birdDummy.position.set(bx, by, bz + (w ? 0.15 : -0.15));
+        birdDummy.rotation.set(0, -a + Math.PI / 2, (w ? 1 : -1) * flap);
+        birdDummy.updateMatrix();
+        birdMesh.setMatrixAt(i * 2 + w, birdDummy.matrix);
+      }
+    }
+    birdMesh.instanceMatrix.needsUpdate = true;
 
     camera.getWorldDirection(forward);
     right.crossVectors(forward, camera.up).normalize();
@@ -1847,15 +2460,21 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
         skyLanterns.splice(i, 1);
       }
     }
-    renderer.render(scene, camera);
+    renderFrame();
 
     if (!reduced && sampled < 150 && mode !== 'moon') {
       sampled++;
       if (dt > 0.034) slowFrames++;
-      if (sampled === 150 && slowFrames > 60 && pixelRatio > 0.8) {
-        pixelRatio = pixelRatio > 1 ? 1 : 0.8;
-        fallGeo.instanceCount = Math.floor(fallCount * 0.55);
-        burst.instanceCount = Math.floor(burstCount * 0.6);
+      if (sampled === 150 && slowFrames > 60) {
+        if (pipeline && pipeline.state.bloom) {
+          pipeline.state.bloom = false;
+        } else if (pipeline && pipeline.state.ink) {
+          pipeline.inkUniforms.uStrength.value *= 0.6;
+        } else if (renderScale > 0.9) {
+          renderScale = renderScale > 1 ? 1 : 0.85;
+          fallGeo.instanceCount = Math.floor(fallCount * 0.55);
+          burst.instanceCount = Math.floor(burstCount * 0.6);
+        }
         resize();
         sampled = 0;
         slowFrames = 0;
@@ -1874,20 +2493,33 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
   if (!reduced) frame = requestAnimationFrame(loop);
   const renderStill = () => { if (reduced) step(performance.now()); };
 
+  const stopLoop = () => {
+    if (reduced || !running) return;
+    running = false;
+    cancelAnimationFrame(frame);
+  };
+  const startLoop = () => {
+    if (reduced || running) return;
+    running = true;
+    last = 0;
+    frame = requestAnimationFrame(loop);
+  };
   const onHide = () => {
-    if (reduced) return;
-    if (document.hidden) {
-      running = false;
-      cancelAnimationFrame(frame);
-    } else if (!running) {
-      running = true;
-      last = 0;
-      frame = requestAnimationFrame(loop);
-    }
+    if (document.hidden) stopLoop();
+    else startLoop();
   };
   document.addEventListener('visibilitychange', onHide);
-  window.addEventListener('resize', resize);
-  window.visualViewport?.addEventListener('resize', resize);
+  const onResize = () => { resize(); if (reduced) renderStill(); };
+  window.addEventListener('resize', onResize);
+  window.visualViewport?.addEventListener('resize', onResize);
+
+  /* 滚出屏幕就停：她读信时三维不该占着 GPU */
+  if ('IntersectionObserver' in window && canvas.parentElement) {
+    new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) startLoop();
+      else stopLoop();
+    }, { rootMargin: '120px' }).observe(canvas.parentElement);
+  }
 
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
@@ -1897,9 +2529,10 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
   const gust = (amount = 0.8) => { wind = Math.min(2.4, wind + amount); };
   const flourish = {
     arrive: [2.4, 2.1, -1.8, 3.2, [1, 0.84, 0.88]],
-    mv1: [-0.8, 2.3, -3.4, 2.8, [1, 0.78, 0.86]],
-    mv2: [4.2, 2.5, -11.6, 3.4, [1, 0.7, 0.82]],
-    mv3: [0.1, 2.1, -28.4, 2.6, [1, 0.68, 0.52]],
+    mv1: [-0.4, 1.7, 21.4, 3.0, [1, 0.86, 0.76]],
+    mv2: [0, 2.7, 33.0, 3.2, [1, 0.88, 0.92]],
+    pe: [0.6, 1.9, 36.0, 3.6, [1, 0.9, 0.78]],
+    mv3: [-0.8, 2.3, -3.4, 2.8, [1, 0.78, 0.86]],
     mv4: [0, islandTop + 1.55, -44.2, 5.4, [0.92, 0.72, 1]],
     mv5: [0, islandTop + 1.7, -43.7, 3.0, [0.78, 0.86, 1]],
   };
@@ -1967,7 +2600,20 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
     pattern.forEach(([x, z], i) => launchFirework(x + R(-0.3, 0.3), z + R(-0.3, 0.3), 0.15 + i * 0.42));
   };
 
-  return {
+  const api = {
+    /* 取景用：把镜头放到指定位置渲染一帧，只有带 ?ml=shot 的页面才会拿到这个句柄 */
+    shot(pos, look, ph) {
+      shotMode = true;
+      camPos.set(pos[0], pos[1], pos[2]);
+      camLook.set(look[0], look[1], look[2]);
+      wantPos.copy(camPos);
+      wantLook.copy(camLook);
+      camera.position.copy(camPos);
+      camera.lookAt(camLook);
+      if (typeof ph === 'number') phase = ph;
+      applyEnvironment();
+      renderFrame();
+    },
     setBeat(next) {
       if (next === 'moon') mode = 'moon';
       else if (next === 'yes') celebrate();
@@ -2031,6 +2677,30 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
           releaseLantern(R(-2.2, 2.2), islandTop + R(0.4, 1.2), -44 + R(-2, 2));
         }
       }
+      if (name === 'harmony') {
+        /* 她按下「一起把这首唱完」：从台下走上来，站到他旁边 */
+        harmonyOn = true;
+        harmony = 0;
+        gust(1.1);
+        pulse = 1.3;
+        petalBurst(0.4, 1.9, CAMPUS.stageZ, 3.2, [1, 0.86, 0.9]);
+      }
+      if (name === 'blackboard') {
+        blackboardGlow = 1;
+        petalBurst(0.4, 2.2, CAMPUS.stageZ + 2.2, 2.0, [0.9, 0.94, 1]);
+        gust(0.6);
+      }
+      if (name === 'gate') {
+        petalBurst(0, 2.6, CAMPUS.gateZ - 0.6, 3.0, [1, 0.9, 0.86]);
+        gust(0.7);
+        pulse = 1.2;
+      }
+      if (name === 'pe') {
+        trackOn = true;
+        if (typeof value === 'number' && value > 0) walkT = value;
+        playFlourish('pe');
+        gust(0.6);
+      }
       if (name === 'yes') celebrate();
       renderStill();
     },
@@ -2059,6 +2729,17 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
         } else if (best.type === 'crystal') {
           confess = Math.max(confess, 0.8);
           pulse = 1.2;
+        } else if (best.type === 'microphone') {
+          harmonyOn = true;
+          harmony = 0;
+          pulse = 1.3;
+          petalBurst(best.x, 1.9, best.z, 2.6, [1, 0.86, 0.9]);
+        } else if (best.type === 'blackboard') {
+          blackboardGlow = 1;
+          petalBurst(best.x, 2.1, best.z, 2.0, [0.92, 0.95, 1]);
+        } else if (best.type === 'gate') {
+          petalBurst(best.x, 2.4, best.z, 2.8, [1, 0.9, 0.86]);
+          pulse = 1.2;
         } else {
           pulse = 1.4;
           petalBurst(best.x, best.y + 1.2, best.z, 1.6);
@@ -2076,9 +2757,26 @@ export async function mountIsland(canvas, { reduced = false } = {}) {
       running = false;
       cancelAnimationFrame(frame);
       document.removeEventListener('visibilitychange', onHide);
-      window.removeEventListener('resize', resize);
-      window.visualViewport?.removeEventListener('resize', resize);
+      window.removeEventListener('resize', onResize);
+      window.visualViewport?.removeEventListener('resize', onResize);
+      /* 动态对象（流星、烟花、孔明灯）留在场景里会连着几何一起泄漏，先清干净 */
+      shooting.forEach((s) => { scene.remove(s.line); s.line.geometry.dispose(); s.line.material.dispose(); });
+      shooting.length = 0;
+      fireworks.forEach((f) => {
+        if (f.sparks) { scene.remove(f.sparks.points); f.sparks.points.geometry.dispose(); f.sparks.points.material.dispose(); }
+      });
+      fireworks.length = 0;
+      skyLanterns.forEach((l) => {
+        scene.remove(l.mesh, l.glowSprite);
+        l.mesh.material.dispose();
+        l.glowSprite.material.dispose();
+      });
+      skyLanterns.length = 0;
+      renderer.renderLists?.dispose?.();
+      if (pipeline) pipeline.dispose();
       renderer.dispose();
     },
   };
+  if (location.search.includes('ml=shot')) window.__miniLoveIsland = api;
+  return api;
 }
