@@ -7,7 +7,7 @@ import * as THREE from 'three'
 import { PAL } from './crossing/core/palette.js'
 import { Pipeline } from './crossing/core/post.js'
 import { buildSky } from './crossing/core/sky.js'
-import { R, CENTER, basisAt, positionAt } from './crossing/world/planet.js'
+import { R, CENTER, basisAt, positionAt, flatAt } from './crossing/world/planet.js'
 import { setOutlineResolution } from './crossing/core/outline.js'
 import { Player } from './crossing/core/player.js'
 import { buildWorld } from './crossing/world/index.js'
@@ -532,6 +532,20 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     media: mediaIndex,
     /* 验收脚本要靠落位把相机摆到每件素材的正面，见 `verify-media-shots.cjs`。 */
     mediaPlacements,
+    /**
+     * 平面 <-> 球面的换算，给验收脚本用。
+     *
+     * 素材的坐标是写死在 `media.ts` 里的**平面**坐标，而射线打出来的是
+     * **世界**坐标；要把「这面墙在哪」变成「牌子该写什么坐标」，必须能反解。
+     * 这套数学本来就在 `planet.js` 里，只是没对外露过 —— 露出来比在脚本里
+     * 抄一遍安全（抄错一个符号就会把牌子摆到星球另一面）。
+     */
+    planet: {
+      R,
+      basisAt,
+      positionAt,
+      flatAt,
+    },
     /**
      * 站到某个平面坐标上、朝给定的平面方向看。
      *

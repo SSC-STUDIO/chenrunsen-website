@@ -201,8 +201,20 @@ export function buildJayMedia(ctx, { gotoStop = null } = {}) {
   for (const spec of MEDIA) {
     const h = spec.w / spec.aspect;
     const board = makeBoard(spec, { w: spec.w, h });
+    /* **牌子挂在墙上，不是嵌在墙里。**
+     *
+     * `media.ts` 里每一块牌子的坐标，都是 `place-media.cjs` 在站点视线锥里
+     * 打中一面墙得到的**墙点**。而一块画框是有厚度的：把组直接放在墙点上，
+     * 背板就有一半埋进墙体，画面前面就是墙皮 —— 用户看到的「MV 悬空 /
+     * 看不见」里，有一部分其实是「牌子刚好齐平嵌进墙面」。
+     *
+     * 所以沿 face（墙指向观者的方向）把它推出来 9 cm：够让背板贴住墙面，
+     * 又不会像悬在空中。 */
+    const WALL_OFFSET = 0.09;
+    const bx = spec.x + Math.sin(spec.face) * WALL_OFFSET;
+    const bz = spec.z + Math.cos(spec.face) * WALL_OFFSET;
     const y = ctx.groundAt(spec.x, spec.z) + spec.y + h / 2;
-    board.position.set(spec.x, y, spec.z);
+    board.position.set(bx, y, bz);
     board.rotation.y = spec.face;
     ctx.add(board);
     shadowify(board, true, false);
@@ -216,8 +228,8 @@ export function buildJayMedia(ctx, { gotoStop = null } = {}) {
      * 同一站的几块牌子指向同一个 zone，重叠了也无所谓。 */
     if (gotoStop) {
       const reach = 0.7;
-      const hx = spec.x + Math.sin(spec.face) * reach;
-      const hz = spec.z + Math.cos(spec.face) * reach;
+      const hx = bx + Math.sin(spec.face) * reach;
+      const hz = bz + Math.cos(spec.face) * reach;
       const hit = box(spec.w + 0.3, h + 0.3, 0.3, flat({ color: 0xff0000, cache: false }), hx, y, hz);
       hit.visible = false;
       hit.rotation.y = spec.face;
