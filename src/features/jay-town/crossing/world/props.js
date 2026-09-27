@@ -1294,6 +1294,103 @@ export function birdSilhouetteGeo(scale = 1) {
 }
 
 /**
+ * The same bird, split so its wings can hinge.
+ *
+ * The split is what makes flapping possible at all.  `birdSilhouetteGeo` is one
+ * welded sheet, so the only way to move its wings is to move the whole bird --
+ * which is exactly why the original flock hung in the sky.  Here the body solid
+ * is cut at `+-cut` and each wing is emitted as its own prism about its own
+ * shoulder, so a shader can rotate one about that shoulder without touching the
+ * middle.
+ *
+ * Everything goes into a single unindexed buffer with a per-vertex `aPart`
+ * (0 body, 1 left wing, 2 right wing), because the three pieces have to end up
+ * as one `InstancedMesh` per material and a material cannot be attached to a
+ * triangle any other way.  `aCut` carries the cut width so the vertex shader
+ * knows where the hinge is.
+ */
+export function birdSplitGeo(scale = 1, cutW = 0.026) {
+  const s = scale;
+  const cut = cutW * s;
+  const positions = [];
+  const owner = [];
+
+  const push = (part, x, y, z) => {
+    positions.push(x, y, z);
+    owner.push(part);
+  };
+
+  /* The body: the same emission `buildBody` does, with every vertex clamped
+   * into the middle band.  Clamping rather than testing means no triangle is
+   * dropped -- the sliver of a triangle that spans the cut collapses onto it,
+   * and the wing picks the other side up. */
+  for (const [a, b, c] of BODY_TRIS) {
+    for (const tri of [[a, b, c], [a, c, b]]) {
+      const sign = tri[0] === a ? -1 : 1;
+      for (const i of tri) {
+        const w = BODY_VERTS[i][3] * s;
+        push(0, sign * Math.min(w, cut), BODY_VERTS[i][1] * s, BODY_VERTS[i][2] * s);
+      }
+    }
+  }
+
+  /* One wing, as a thin tapered slab running from the shoulder to the tip.
+   *
+   * Written flat, because a wing bone on a bird is essentially straight and the
+   * flap ease is what shapes it.  The mid station's height is struck with the
+   * *same* lerp the ease uses, so the middle of the wing travels with the wing
+   * instead of being left behind by it. */
+  const span = (sign) => {
+    const shoulder = -0.02 * s * sign;
+    const tip = -0.40 * s * sign;
+    const yShoulder = 0.030 * s;
+    const yTip = 0.062 * s;
+    const xs = [shoulder, (shoulder + tip) / 2, tip];
+    const ys = [yShoulder, yShoulder + (yTip - yShoulder) * 0.5, yTip];
+    const zLead = 0.02 * s;
+    const zTrail = 0.14 * s;
+    const thick = 0.012 * s;
+
+    /* Six stations: [x, y, z] for the leading and trailing edge, at each of the
+     * three stations down the span, then the same six lifted by `thick`.
+     * Faces are then the top sheet, the bottom sheet, and the two rims. */
+    const lower = [];
+    for (let i = 0; i < 3; i++) {
+      lower.push([xs[i], ys[i], -zLead], [xs[i], ys[i], zTrail]);
+    }
+    const upper = lower.map((p) => [p[0], p[1] + thick, p[2]]);
+    const V = [...lower, ...upper];
+
+    // leading edge is index 2i, trailing is 2i+1; upper is +6
+    const tris = [];
+    const quad = (a, b, c, d) => { tris.push([a, b, c], [a, c, d]); };
+    for (const [i0, i1] of [[0, 1], [1, 2]]) {
+      const l0 = i0 * 2, t0 = i0 * 2 + 1, l1 = i1 * 2, t1 = i1 * 2 + 1;
+      quad(l0, l1, t1, t0);                        // top sheet
+      quad(l0 + 6, t0 + 6, t1 + 6, l1 + 6);        // bottom sheet
+      quad(l0, l0 + 6, l1 + 6, l1);                // leading rim
+      quad(t0, t1, t1 + 6, t0 + 6);                // trailing rim
+    }
+    quad(0, 1, 7, 6);                              // shoulder cap
+    quad(4, 10, 11, 5);                            // tip cap
+
+    const part = sign < 0 ? 1 : 2;
+    for (const [a, b, c] of tris) {
+      for (const i of [a, b, c]) push(part, V[i][0], V[i][1], V[i][2]);
+    }
+  };
+  span(-1);
+  span(1);
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('aPart', new THREE.Float32BufferAttribute(owner, 1));
+  g.setAttribute('aCut', new THREE.Float32BufferAttribute(new Float32Array([cut]), 1));
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
  * A crow on a wire.
  *
  * ## The wings are folded, because it is perched
