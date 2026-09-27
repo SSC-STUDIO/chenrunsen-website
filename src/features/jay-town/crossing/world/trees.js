@@ -96,6 +96,10 @@ export function buildSakura(ctx, spots) {
      * limb clusters instead of filling a sphere. */
     const limbs = 4 + Math.floor(rng.next() * 3);
     const canopyCenters = [];
+    /* Every wood segment this tree actually draws, as [a, b, radius].  Kept so
+     * the blossom can be hung *on* the branch rather than near where one ends;
+     * see the note above the blossom block. */
+    const limbs_ = [];
     const pushTip = (p, weight = 1) => {
       canopyCenters.push({ p: p.clone(), w: weight });
     };
@@ -113,6 +117,7 @@ export function buildSakura(ctx, spots) {
       );
       const limbR0 = 0.14 * S * rng.range(0.9, 1.1);
       woodSeg(woodParts, branchGeo, top, end, limbR0, limbR0 * 0.55);
+      limbs_.push([top, end, limbR0]);
       pushTip(end, 1.15);
 
       // primary fork (~every limb)
@@ -124,6 +129,7 @@ export function buildSakura(ctx, spots) {
         const l2 = len * rng.range(0.42, 0.72);
         const e2 = end.clone().addScaledVector(dir2, l2);
         woodSeg(woodParts, twigGeo, end, e2, limbR0 * 0.5, limbR0 * 0.28);
+        limbs_.push([end, e2, limbR0 * 0.5]);
         pushTip(e2, 1.0);
 
         // tertiary tip twig — keeps wood visible through the blossom
@@ -134,6 +140,7 @@ export function buildSakura(ctx, spots) {
           const l3 = l2 * rng.range(0.4, 0.7);
           const e3 = e2.clone().addScaledVector(dir3, l3);
           woodSeg(woodParts, tipGeo, e2, e3, limbR0 * 0.26, limbR0 * 0.12);
+          limbs_.push([e2, e3, limbR0 * 0.26]);
           pushTip(e3, 0.85);
         }
       }
@@ -147,64 +154,49 @@ export function buildSakura(ctx, spots) {
         const lSide = len * rng.range(0.32, 0.55);
         const eSide = midPt.clone().addScaledVector(side, lSide);
         woodSeg(woodParts, twigGeo, midPt, eSide, limbR0 * 0.42, limbR0 * 0.2);
+        limbs_.push([midPt, eSide, limbR0 * 0.42]);
         pushTip(eSide, 0.75);
       }
     }
 
-    /* Blossom: one connected mass at the crown, built by rejection sampling.
+    /* Blossom, hung ON the branches.
      *
-     * What was here before scattered `52 + rng*18` clumps uniformly in a box
-     * of +-0.42..0.68 m around whichever limb tip the picker chose, with
-     * radii of 0.12..0.30 m.  Limb tips on a 1.2-scale tree sit up to four
-     * metres apart, and a 0.12 m puff at +-0.68 m from its own tip touches
-     * neither its neighbours nor anything else -- so *the great majority of
-     * clumps landed in empty air*, and the crown read as a cloud of pink
-     * dinner plates floating off bare sticks.  That is not a tuning miss; the
-     * spread was simply wider than twice the radius, so overlap could not
-     * happen by construction.
+     * **This is the fix for the clumps that float with no wood under them.**
      *
-     * Three things fix it, and all three are needed:
+     * What was here scattered `52 + rng*18` clumps uniformly in a box of
+     * +-0.42..0.68 m around whichever limb tip the weighted picker chose, with
+     * radii of 0.12..0.30 m.  Two numbers make that impossible: a limb tip's
+     * *neighbour* is two to four metres away, and the clump's own offset from
+     * its anchor was up to twice its radius.  So a clump touched neither the
+     * branch it was nominally anchored to nor anything else -- it was placed in
+     * the air beside the tree by construction, and roughly two clumps in three
+     * landed that way.  No amount of tuning the count or the radius fixes a
+     * placement rule that does not reference the wood.
      *
-     *  - **A crown volume, not a tip volume.**  Every clump is placed inside
-     *    the sphere the limbs actually sweep.  As long as the count is high
-     *    enough, a uniform fill of that sphere has to be connected, without
-     *    any pairwise testing -- which matters, because a real cluster test
-     *    over ~90 blobs a tree would be the most expensive thing in the world
-     *    build.
-     *  - **Explicit no-overlap rejection**, so the mass has visible structure
-     *    instead of being a smooth ball.  Placing each clump at a random point
-     *    and retrying when it lands too close to another is the cheap way to
-     *    get a packed, clustered look -- and the retries naturally fill the
-     *    holes rather than clumping.
-     *  - **Tones weighted by position.**  The old code let 62% of clumps be
-     *    'mid' and then re-rolled 16% of them at random, which is what put
-     *    white puffs deep inside the crown; here a `deepPink` roll puts the
-     *    saturated tone on the *inside* and undersides, where the light would
-     *    actually be blocked. */
-    const baseCount = Math.round((78 + Math.floor(rng.next() * 20)) * dens);
-    const crown = new THREE.Vector3();
-    const tipDist = [];
-    for (const c of canopyCenters) {
-      crown.add(c.p);
-      tipDist.push(c.p.distanceTo(top));
-    }
-    crown.multiplyScalar(1 / canopyCenters.length);
-    // The crown sits slightly above the mean of its tips, because blossom
-    // builds up on the outside of a limb, not on its axis.
-    crown.y += 0.34 * S;
-    tipDist.sort((a, b) => a - b);
-    const crownR = Math.max(1.0, tipDist[Math.floor(tipDist.length * 0.9)] * 1.02);
-    const big = 0.33 * S;
-    const small = 0.24 * S;
+     * So the wood comes first now.  Every segment `woodSeg` draws is recorded
+     * in `limbs_` as [a, b, radius], and blossom is placed **along** them:
+     * pick a segment, walk a little way down it, step off the axis by about the
+     * limb's own radius, and put a clump there.  Every clump is then within a
+     * few tens of centimetres of real wood, which is what a cherry actually
+     * looks like -- blossom in a sleeve around the branch, densest at the tips.
+     *
+     * Two things fall out of doing it this way and both are wanted:
+     *
+     *  - the mass follows the branch structure, so the tree stops reading as a
+     *    ring of separate balls and starts reading as *this* tree's crown;
+     *  - `t` is biased toward the far end of each segment, so the tips are
+     *    heaviest and the crown thins back toward the trunk. */
+    const baseCount = Math.round((86 + Math.floor(rng.next() * 22)) * dens);
 
     let yMin = Infinity, yMax = -Infinity;
-    for (const c of canopyCenters) {
-      yMin = Math.min(yMin, c.p.y);
-      yMax = Math.max(yMax, c.p.y);
+    for (const seg of limbs_) {
+      yMin = Math.min(yMin, seg[0].y, seg[1].y);
+      yMax = Math.max(yMax, seg[0].y, seg[1].y);
     }
-    const ySpan = Math.max(0.5, yMax + 0.9 * S - yMin);
+    yMax = Math.max(yMax, yMin + 0.5);
+    const ySpan = yMax - yMin;
 
-    /** Weighted pick of a canopy anchor, so blossom favours the limb ends. */
+    /** Weighted pick of a canopy anchor, kept for the rim flecks below. */
     const pickCenter = () => {
       let t = rng.next() * canopyCenters.reduce((s, c) => s + c.w, 0);
       for (const c of canopyCenters) {
@@ -214,86 +206,75 @@ export function buildSakura(ctx, spots) {
       return canopyCenters[canopyCenters.length - 1].p;
     };
 
-    /* Placed clumps, as (centre, radius).  Kept flat arrays rather than
-     * objects: this is the hot loop of the world build and there are a few
-     * thousand of them across the town. */
-    const placed = [];
-    const minGap = 0.17 * S;
-
     const addBlob = (px, py, pz, r) => {
       const roll = rng.next();
-      const radial = Math.hypot(px - crown.x, pz - crown.z) / crownR;
       const hi = (py - yMin) / ySpan;
       /* Sunlit tops and the lid; deep pink on the undersides and the shaded
        * inner mass; mid everywhere else, which is most of it.  A per-tree
        * `tone` still overrides the lot, which is how a whole tree is pinned to
        * one shade. */
       const tone = spot.tone !== undefined ? spot.tone
-        : (hi > 0.62 || radial > 0.64) ? 0
-          : (hi < 0.3 || (radial < 0.42 && roll < 0.5)) ? 2
+        : hi > 0.6 ? 0
+          : (hi < 0.26 || roll < 0.22) ? 2
             : 1;
       blobs[tone].push(trs(
         px, py, pz,
         rng.range(0, 3), rng.range(0, 3), rng.range(0, 3),
-        r * rng.range(0.92, 1.16),
-        r * rng.range(0.6, 0.84),
-        r * rng.range(0.88, 1.14),
+        r * rng.range(0.9, 1.18),
+        r * rng.range(0.56, 0.82),
+        r * rng.range(0.9, 1.16),
       ));
-      placed.push(px, py, pz, r);
     };
 
     for (let i = 0; i < baseCount; i++) {
-      let px = 0, py = 0, pz = 0, r = small, ok = false;
-      for (let tries = 0; tries < 6 && !ok; tries++) {
-        r = big * rng.range(0.68, 1.32);
-        // Cube-root the radius so the samples fill the *volume* evenly rather
-        // than piling into the middle, then squash vertically: a cherry crown
-        // is wider than it is deep.
-        const rr = crownR * Math.cbrt(rng.next());
-        const th = rng.range(0, Math.PI * 2);
-        const ph = Math.acos(rng.range(-1, 1));
-        px = crown.x + rr * Math.sin(ph) * Math.cos(th);
-        py = crown.y + rr * Math.cos(ph) * 0.66;
-        pz = crown.z + rr * Math.sin(ph) * Math.sin(th);
+      const seg = limbs_[Math.floor(rng.next() * limbs_.length) % limbs_.length];
+      const [a, b, segR] = seg;
+      // walk down the segment, biased to the outer half where blossom sits
+      const t = 0.18 + Math.sqrt(rng.next()) * 0.82;
+      const along = a.clone().lerp(b, t);
 
-        ok = true;
-        for (let k = 0; k < placed.length; k += 4) {
-          const dx = px - placed[k];
-          const dy = py - placed[k + 1];
-          const dz = pz - placed[k + 2];
-          if (dx * dx + dy * dy + dz * dz < minGap * minGap) { ok = false; break; }
-        }
-      }
-      addBlob(px, py, pz, r);
+      /* Step off the axis.  `segR` is the limb's own girth at its butt and the
+       * offset is a couple of times that, which keeps the clump's centre just
+       * clear of the wood while its radius still swallows it -- so the branch
+       * enters the blossom rather than being buried in it or missing it. */
+      const off = (segR * 1.4 + 0.05) * S;
+      const th = rng.range(0, Math.PI * 2);
+      const ph = Math.acos(rng.range(-1, 1));
+      const r = 0.165 * S * rng.range(0.7, 1.35);
+      addBlob(
+        along.x + off * Math.sin(ph) * Math.cos(th),
+        along.y + off * Math.cos(ph) - r * 0.18,
+        along.z + off * Math.sin(ph) * Math.sin(th),
+        r,
+      );
     }
 
-    /* A second, looser pass walking back out over the tips.  This is what
-     * pulls the blossom onto the branch ends, so the wood comes out of the
-     * mass instead of the mass hanging beside it -- and being looser than the
-     * first pass, it can sit outside the crown radius and break the silhouette
-     * up so the tree is not a ball. */
-    const fill = Math.round(22 * dens);
+    /* A looser pass still walking out over the tips.  Blossom is heaviest at
+     * the very ends of a cherry, and this is what puts it there -- and being
+     * looser than the sleeve it also breaks the silhouette so the tree is not
+     * an even tube of pink. */
+    const fill = Math.round(26 * dens);
     for (let i = 0; i < fill; i++) {
       const c = pickCenter();
-      const r = 0.27 * S * rng.range(0.7, 1.25);
+      const r = 0.2 * S * rng.range(0.7, 1.3);
       addBlob(
-        c.x + rng.range(-0.42, 0.42) * S,
-        c.y + rng.range(-0.3, 0.42) * S,
-        c.z + rng.range(-0.42, 0.42) * S,
+        c.x + rng.range(-0.3, 0.3) * S,
+        c.y + rng.range(-0.22, 0.34) * S,
+        c.z + rng.range(-0.3, 0.3) * S,
         r,
       );
     }
 
     /* The lit rim.  Small and pale, and only on the outer shell -- these are
      * what stop the mass reading as one flat pink solid. */
-    const flecks = Math.round((16 + Math.floor(rng.next() * 8)) * dens);
+    const flecks = Math.round((14 + Math.floor(rng.next() * 8)) * dens);
     for (let i = 0; i < flecks; i++) {
       const c = pickCenter();
       const r = 0.09 * S * rng.range(0.8, 1.2);
       addBlob(
-        c.x + rng.range(-0.55, 0.55) * S,
-        c.y + rng.range(0.14, 0.6) * S,
-        c.z + rng.range(-0.55, 0.55) * S,
+        c.x + rng.range(-0.42, 0.42) * S,
+        c.y + rng.range(0.12, 0.5) * S,
+        c.z + rng.range(-0.42, 0.42) * S,
         r,
       );
     }
