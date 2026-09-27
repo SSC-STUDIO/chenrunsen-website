@@ -92,8 +92,8 @@ const MASK_VERT = /* glsl */ `
 `
 
 export type MaskResult = {
-  /** `mask-image` URL, or `null` when no mask is needed. */
-  maskUrl: string | null
+  /** A CSS `clip-path` for the portal, or `''` when nothing needs clipping. */
+  clip: string
   /** Raw pixels, one byte per cell, row-major and top-down.  For tests. */
   grid: Uint8Array
   /** Fraction of cells the world does not hide. */
@@ -105,11 +105,6 @@ export class ScreenMask {
   private material: THREE.ShaderMaterial
   private quad: FullScreenQuad
   private pixels: Uint8Array
-  private canvas: HTMLCanvasElement
-  private ctx: CanvasRenderingContext2D
-  private image: ImageData
-  private url: string | null = null
-  private pending = false
   private scratch = new THREE.Matrix4()
 
   readonly width: number
@@ -147,17 +142,6 @@ export class ScreenMask {
     this.quad = new FullScreenQuad(this.material)
 
     this.pixels = new Uint8Array(this.cells * 4)
-    this.canvas = document.createElement('canvas')
-    this.canvas.width = width
-    this.canvas.height = height
-    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true }) as CanvasRenderingContext2D
-    this.image = this.ctx.createImageData(width, height)
-    // white where visible; the alpha channel carries the mask
-    for (let i = 0; i < this.cells; i++) {
-      this.image.data[i * 4] = 255
-      this.image.data[i * 4 + 1] = 255
-      this.image.data[i * 4 + 2] = 255
-    }
     this.grid = new Uint8Array(this.cells)
   }
 
@@ -209,39 +193,62 @@ export class ScreenMask {
         const on = this.pixels[src + x * 4] > 127
         if (on) lit++
         this.grid[y * this.width + x] = on ? 1 : 0
-        this.image.data[dst + x * 4 + 3] = on ? 255 : 0
       }
     }
 
-    if (lit === 0) return { maskUrl: null, grid: this.grid, coverage: 0 }
-    if (lit === this.cells) return { maskUrl: null, grid: this.grid, coverage: 1 }
+    if (lit === 0) return { clip: 'inset(100% 0 0 0)', grid: this.grid, coverage: 0 }
+    if (lit === this.cells) return { clip: '', grid: this.grid, coverage: 1 }
 
-    this.ctx.putImageData(this.image, 0, 0)
-    /* **Not `toDataURL`.**
-     *
-     * The first version handed back a base64 PNG, which meant a synchronous
-     * *encode* every time the mask refreshed -- and the encode turned out to
-     * cost more than the depth readback it was describing.  A blob is a handle
-     * to the same canvas with no base64 step at all, and `mask-image` takes a
-     * blob URL perfectly well, so the encoding was pure overhead.
-     *
-     * `toBlob` is still asynchronous, so the URL from the previous refresh
-     * stays in place until the new one arrives: the mask lags a frame behind
-     * the transform, which at 6 Hz is invisible and far better than blocking
-     * the frame on an encoder. */
-    if (this.pending) return { maskUrl: this.url, grid: this.grid, coverage: lit / this.cells }
-    this.pending = true
-    this.canvas.toBlob((blob) => {
-      this.pending = false
-      if (!blob) return
-      if (this.url) URL.revokeObjectURL(this.url)
-      this.url = URL.createObjectURL(blob)
-    }, 'image/png')
-    return { maskUrl: this.url, grid: this.grid, coverage: lit / this.cells }
+    return { clip: this.clipFromGrid(), grid: this.grid, coverage: lit / this.cells }
+  }
+
+  /**
+   * The visible grid as a CSS `clip-path`, in the portal's own pixels.
+   *
+   * ## Why not a `mask-image`
+   *
+   * The mask used to be a canvas encoded to a PNG blob and hung on `mask-image`.
+   * That works, but `toBlob` is *asynchronous*: between handing the element a
+   * new URL and the browser finishing decoding it, the element has no valid
+   * mask at all and paints unclipped for that moment.  On a moving screen that
+   * is a flash of video where a wall should be -- which is what was reported as
+   * black rectangles showing through from elsewhere, and what read as banding
+   * while the mask caught up.
+   *
+   * A `clip-path` is resolved synchronously as a style, so there is no window
+   * at all: the element either has the clip or it does not, and it is set in the
+   * same frame the grid was computed.  It is also resolution-independent -- the
+   * polygon is in pixels and the browser antialiases its edges, so the staircase
+   * a coarse grid would show along a diagonal is softened rather than left as
+   * the hard cell steps a nearest-neighbour mask produced.
+   *
+   * It is built from one box per row of visible cells, joining any run of
+   * adjacent cells into a single rectangle: a typical silhouette is a few dozen
+   * boxes rather than one per cell.
+   */
+  private clipFromGrid(): string {
+    const parts: string[] = []
+    for (let y = 0; y < this.height; y++) {
+      let runStart = -1
+      for (let x = 0; x <= this.width; x++) {
+        const on = x < this.width && this.grid[y * this.width + x] === 1
+        if (on && runStart < 0) runStart = x
+        if (!on && runStart >= 0) {
+          const x0 = (runStart / this.width) * 100
+          const x1 = (x / this.width) * 100
+          const y0 = (y / this.height) * 100
+          const y1 = ((y + 1) / this.height) * 100
+          parts.push(`M${x0}% ${y0}%H${x1}%V${y1}%H${x0}%Z`)
+          runStart = -1
+        }
+      }
+    }
+    /* A path with several closed subpaths is not expressible as a polygon, so
+     * this uses `path()` -- supported everywhere `clip-path` is used here. */
+    return parts.length ? `path("${parts.join('')}")` : 'inset(100% 0 0 0)'
   }
 
   dispose() {
-    if (this.url) URL.revokeObjectURL(this.url)
     this.rt.dispose()
     this.quad.dispose()
     this.material.dispose()

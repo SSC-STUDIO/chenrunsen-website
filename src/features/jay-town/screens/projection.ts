@@ -115,12 +115,40 @@ export function projectQuad(
  * That is the same layout CSS uses, so `invert3x3` can take it straight to a
  * `matrix3d`.
  *
+ * ## Winding, which is the mirroring bug
+ *
+ * The source box is in DOM order -- left-to-right, top-to-bottom -- and the
+ * first version of this mapped it to `q` in the same order, on the assumption
+ * that `fillCorners` also walked the screen left-to-right.  **It does not.**  A
+ * screen whose yaw turns it to face the viewer has a world-space basis whose
+ * `right` vector points the *other* way, so the corner that lands on the
+ * viewer's left is the one `fillCorners` emitted last.  The mapping then sends
+ * the element's left edge to the viewer's right, and the picture is mirrored --
+ * which is exactly what a π-rotated screen showed.
+ *
+ * So the winding is checked rather than assumed: the signed area of `q` in
+ * screen space (where y grows downward, so a non-mirrored quad is positive)
+ * says whether the corners arrived reversed, and if they did, the two pairs are
+ * swapped before solving.  That is a transpose, not a flip, so the vertical
+ * order is preserved along with it.
+ *
  * Returns `null` for a degenerate quad -- a screen seen exactly edge-on has no
  * area to draw into, and the caller shows an empty frame instead of a
  * collapsed video.
  */
 export function quadToHomography(q: Quad, out: Float32Array): Float32Array | null {
-  const [p0, p1, p2, p3] = q
+  /* Shoelace, in screen space.  Positive means the quad runs clockwise on the
+   * page, which is what DOM order produces when the screen is not reversed. */
+  const area
+    = (q[1].x - q[0].x) * (q[1].y + q[0].y)
+    + (q[2].x - q[1].x) * (q[2].y + q[1].y)
+    + (q[3].x - q[2].x) * (q[3].y + q[2].y)
+    + (q[0].x - q[3].x) * (q[0].y + q[3].y)
+
+  const [p0, p1, p2, p3] = area < 0
+    ? [q[0], q[3], q[2], q[1]]
+    : [q[0], q[1], q[2], q[3]]
+
   const dx1 = p1.x - p2.x, dx2 = p3.x - p2.x, dx3 = p0.x - p1.x + p2.x - p3.x
   const dy1 = p1.y - p2.y, dy2 = p3.y - p2.y, dy3 = p0.y - p1.y + p2.y - p3.y
 

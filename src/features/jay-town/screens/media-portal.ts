@@ -85,7 +85,7 @@ export class MediaPortal {
   private state: PortalState = 'unloaded'
   private songId = ''
   private visible = false
-  private maskUrl: string | null = null
+  private clip = ''
 
   constructor({ spec, host, onState }: PortalOptions) {
     this.spec = spec
@@ -267,16 +267,21 @@ export class MediaPortal {
   /**
    * Place the portal on the projected quad.
    *
-   * `matrix` is the CSS `matrix3d(...)` from `projection.ts`; `maskUrl` is the
-   * occlusion mask, or `null` when the screen is entirely clear.
+   * `matrix` is the CSS `matrix3d(...)` from `projection.ts`; `clip` is the
+   * occlusion silhouette from `mask.ts`, or `''` when the screen is clear.
    *
-   * The mask goes on the *veil as well as the wrapper*, and that is the whole
-   * reason the veil exists.  Masking only the player leaves the cut edge of the
-   * video hard against live geometry, which reads as a bug; with the same mask
-   * on a dark panel underneath, the edge is a dark screen edge instead, and the
-   * couple of pixels of softness the upscaled mask leaves become a vignette.
+   * The clip goes on the *veil as well as the wrapper*, and that is the whole
+   * reason the veil exists.  Clipping only the player leaves the cut edge of the
+   * video hard against live geometry, which reads as a bug; with the same
+   * silhouette on a dark panel underneath, the edge becomes a dark screen edge
+   * instead.
+   *
+   * A `clip-path` and not a `mask-image`, because the mask version had to be
+   * handed over as an encoded image and the browser decodes those
+   * asynchronously -- so for a frame or two the element had no mask and painted
+   * unclipped, which is what showed video through walls.
    */
-  place(matrix: string, maskUrl: string | null, coverage: number): void {
+  place(matrix: string, clip: string, coverage: number): void {
     if (!matrix) {
       this.wrapper.style.visibility = 'hidden'
       return
@@ -284,12 +289,11 @@ export class MediaPortal {
     this.wrapper.style.transform = matrix
     this.wrapper.style.visibility = 'visible'
 
-    if (maskUrl !== this.maskUrl) {
-      this.maskUrl = maskUrl
-      const value = maskUrl ? `url("${maskUrl}")` : ''
+    if (clip !== this.clip) {
+      this.clip = clip
       for (const el of [this.wrapper, this.veil]) {
-        el.style.maskImage = value
-        el.style.webkitMaskImage = value
+        el.style.setProperty('clip-path', clip)
+        el.style.setProperty('-webkit-clip-path', clip)
       }
     }
     this.wrapper.style.setProperty('--screen-coverage', String(coverage))

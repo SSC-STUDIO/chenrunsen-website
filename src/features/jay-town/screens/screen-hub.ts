@@ -80,6 +80,9 @@ export class ScreenHub {
   private portals: MediaPortal[] = []
   private groups = new Map<number, THREE.Object3D>()
   private maskCache = new Map<number, ScreenMask>()
+  /** The last mask built per zone, kept so it survives between refreshes. */
+  /** The last silhouette built per zone, kept so it survives between refreshes. */
+  private heldMask = new Map<number, { clip: string; coverage: number }>()
 
   private corners = makeCorners()
   private quad: Quad = [
@@ -331,7 +334,19 @@ export class ScreenHub {
     }
 
     this.maskClock += dt
-    const maskDue = (turned || moved) && this.maskClock >= (this.lite ? MASK_INTERVAL_LITE : MASK_INTERVAL)
+    /* **The mask must persist between refreshes.**
+     *
+     * It is rebuilt a few times a second, but `place()` runs every frame, and
+     * the first version passed `null` on every frame that was not a rebuild
+     * frame -- which *cleared* the mask about 160 ms after setting it.  The
+     * result was video hanging in the air in front of walls for most of the
+     * time and clipped correctly for a few milliseconds: reported, correctly,
+     * as the MV showing through solid geometry.
+     *
+     * So the interval now decides when to *recompute*, never whether to apply.
+     * Whatever the last mask was stays on the element until there is a new one,
+     * and the entries below hold it. */
+    const maskDue = moved && this.maskClock >= (this.lite ? MASK_INTERVAL_LITE : MASK_INTERVAL)
 
     const nextInfo: ScreenInfo[] = []
 
@@ -381,8 +396,12 @@ export class ScreenHub {
         })
       }
 
-      let coverage = 1
-      let maskUrl: string | null = null
+      /* Whatever the last silhouette was, it stays applied until there is a new
+       * one.  See the note on `maskDue`: clearing it on the frames between
+       * refreshes is what put the video in front of walls. */
+      const held = this.heldMask.get(spec.zone)
+      let coverage = held?.coverage ?? 1
+      let clip = held?.clip ?? ''
       let draw = Boolean(projected) && matrix !== ''
 
       /* The mask is only worth building for a screen that has something to
@@ -393,12 +412,22 @@ export class ScreenHub {
         const result = this.maskFor(spec.zone).update(
           renderer, depthTexture, camera, this.centre, camera.near, camera.far,
         )
-        maskUrl = result.maskUrl
+        clip = result.clip
         coverage = result.coverage
-        if (coverage <= 0) draw = false
+        this.heldMask.set(spec.zone, { clip, coverage })
+      } else if (!portal.hasMedia) {
+        /* Nothing loaded means nothing to hide, and a stale silhouette from a
+         * previous song would clip the placeholder to the wrong shape. */
+        this.heldMask.delete(spec.zone)
+        clip = ''
+        coverage = 1
       }
 
-      portal.place(draw ? matrix : '', maskUrl, coverage)
+      /* Fully hidden: the screen still belongs to the world, so it keeps its
+       * frame and its curtain and only the player's picture goes away. */
+      if (draw && coverage <= 0) draw = false
+
+      portal.place(draw ? matrix : '', clip, coverage)
       portal.show(draw)
 
       nextInfo.push({
@@ -442,6 +471,7 @@ export class ScreenHub {
     for (const mask of this.maskCache.values()) mask.dispose()
     this.portals = []
     this.maskCache.clear()
+    this.heldMask.clear()
     this.groups.clear()
     this.onInfo = null
     this.onFocus = null
