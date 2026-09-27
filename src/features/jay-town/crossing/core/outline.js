@@ -46,6 +46,36 @@ export function setOutlineResolution(w, h) {
   _materials.forEach((m) => m.uniforms.uResolution.value.set(w, h));
 }
 
+/* Every shell used to get its own material, which meant 1 082 of them and no
+ * two batchable -- and there are only ever a handful of distinct looks, since
+ * a caller picks a thickness from a range about four values wide.  Sharing
+ * them by signature is what lets `batchStatic` collapse the ink work as well
+ * as the surfaces under it. */
+const _shellMats = new Map();
+
+function shellMaterial(thickness, color, opacity) {
+  const key = `${thickness}|${color}|${opacity}`;
+  const hit = _shellMats.get(key);
+  if (hit) return hit;
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uThickness: { value: thickness },
+      uColor: { value: new THREE.Color(color) },
+      uOpacity: { value: opacity },
+      uResolution: { value: _resolution.clone() },
+    },
+    vertexShader: hullVert,
+    fragmentShader: hullFrag,
+    side: THREE.BackSide,
+    transparent: opacity < 1,
+    depthWrite: true,
+    fog: false,
+  });
+  _materials.add(mat);
+  _shellMats.set(key, mat);
+  return mat;
+}
+
 const smoothCache = new WeakMap();
 
 function smoothedGeometry(geo) {
@@ -71,21 +101,7 @@ function smoothedGeometry(geo) {
  */
 export function hullOutline(mesh, { thickness = 0.0038, color = PAL.ink, opacity = 1 } = {}) {
   if (!mesh || !mesh.geometry) return null;
-  const mat = new THREE.ShaderMaterial({
-    uniforms: {
-      uThickness: { value: thickness },
-      uColor: { value: new THREE.Color(color) },
-      uOpacity: { value: opacity },
-      uResolution: { value: _resolution.clone() },
-    },
-    vertexShader: hullVert,
-    fragmentShader: hullFrag,
-    side: THREE.BackSide,
-    transparent: opacity < 1,
-    depthWrite: true,
-    fog: false,
-  });
-  _materials.add(mat);
+  const mat = shellMaterial(thickness, color, opacity);
 
   const geo = smoothedGeometry(mesh.geometry);
   let shell;

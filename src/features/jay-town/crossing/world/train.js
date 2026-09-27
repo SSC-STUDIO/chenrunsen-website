@@ -370,6 +370,10 @@ export function buildTrain(ctx) {
   const rng = rngKit(5150);
   const group = new THREE.Group();
   group.name = 'train';
+  /* The train is bent onto the planet once, then the whole group rotates every
+   * frame. None of its meshes or outline shells may be copied into the static
+   * world batches, or that copy remains parked on the track as a ghost train. */
+  group.userData.noBatch = true;
   group.visible = false;
   ctx.add(group);
 

@@ -10,6 +10,11 @@ This directory vendors world and renderer code from:
 Copyright (c) 2026 Kenton Wang
 Licensed under the MIT License. See LICENSE alongside this notice.
 
+Performance / batching ported from the same MIT lineage:
+
+  https://github.com/ilezhnin/sakura-crossing
+  commits: 5d9b52f (static batching), 9db88f8 (train noBatch)
+
 Not included from upstream (not MIT-redistributable / out of scope):
   - public/audio/ and the stock background music track
   - src/core/audio.js (playlist loader for that audio)

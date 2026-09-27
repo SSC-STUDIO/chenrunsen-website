@@ -248,6 +248,111 @@ export function wrapGeometry(geo, maxEdge = 3.0) {
   return g;
 }
 
+/* --------------------- instance clouds, cut into cells --------------------- */
+
+/**
+ * Cell size for `chunkInstanced`, in metres.
+ *
+ * It is a straight trade: smaller cells cull harder and cost one draw call
+ * each.  The first cut used 30 m, which culled beautifully and put 575 chunks
+ * in the frame at the crossing -- and this scene pays per object, not per
+ * triangle, so that was the wrong end of the trade.  60 m halves the object
+ * count and still throws away everything over the horizon, which is where all
+ * the triangles were.
+ */
+const CHUNK = 60;
+
+/**
+ * Split each baked instance cloud into a grid of smaller clouds.
+ *
+ * The bake used to leave every `InstancedMesh` unculled outright, on the
+ * grounds that its bound would have to come from the instance cloud rather
+ * than from the source geometry and that most clouds spanned the district
+ * anyway.  Both halves were true and the conclusion stopped holding: the world
+ * is 340 m across now and the six canopy clouds each span **318 x 265 m** of
+ * it, so a bound per cloud is a bound round the whole world and culls nothing,
+ * ever.  Measured standing on the 桟橋 with the town over the horizon and 420
+ * draw calls in the frame: **4.40 M of the 5.05 M triangles submitted were
+ * unculled instances**, 3.53 M of it blossom nobody could see.  It is paid
+ * twice, because the shadow pass submits the same clouds again.
+ *
+ * Two kinds of cloud are left whole:
+ *
+ *  - **dynamic ones** (`DynamicDrawUsage` -- only the falling petals), because
+ *    an instance that crosses a cell boundary every few seconds would need the
+ *    grid rebuilt, which costs more than the 980 quads it would save;
+ *  - **anything carrying an outline shell**, because `hullOutline` hands the
+ *    shell the parent's `instanceMatrix` *by reference* and splitting one
+ *    without the other would draw the ink round instances that are not there.
+ *
+ * A cloud that lands in a single cell is not split -- it just gets a real
+ * bound and `frustumCulled` back, which is the whole benefit at no cost.
+ */
+function chunkInstanced(root, cell = CHUNK) {
+  const clouds = [];
+  root.traverse((o) => { if (o.isInstancedMesh) clouds.push(o); });
+
+  const stats = { chunkSplit: 0, chunkCells: 0, chunkWhole: 0, chunkDynamic: 0 };
+  const m = new THREE.Matrix4();
+  const p = new THREE.Vector3();
+
+  const keepWhole = (o, culled) => {
+    if (culled) { o.frustumCulled = true; o.computeBoundingSphere(); }
+    stats.chunkWhole++;
+  };
+
+  for (const src of clouds) {
+    if (src.instanceMatrix.usage === THREE.DynamicDrawUsage || src.children.length > 0) {
+      stats.chunkDynamic++;
+      continue;
+    }
+    if (src.count < 48) { keepWhole(src, true); continue; }
+
+    const buckets = new Map();
+    for (let i = 0; i < src.count; i++) {
+      m.fromArray(src.instanceMatrix.array, i * 16);
+      p.setFromMatrixPosition(m);
+      const key = `${Math.floor(p.x / cell)},${Math.floor(p.y / cell)},${Math.floor(p.z / cell)}`;
+      let b = buckets.get(key);
+      if (!b) buckets.set(key, (b = []));
+      b.push(i);
+    }
+    if (buckets.size < 2) { keepWhole(src, true); continue; }
+
+    const parent = src.parent;
+    for (const list of buckets.values()) {
+      const im = new THREE.InstancedMesh(src.geometry, src.material, list.length);
+      for (let k = 0; k < list.length; k++) {
+        m.fromArray(src.instanceMatrix.array, list[k] * 16);
+        m.toArray(im.instanceMatrix.array, k * 16);
+      }
+      im.instanceMatrix.needsUpdate = true;
+      if (src.instanceColor) {
+        const c = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3), 3);
+        for (let k = 0; k < list.length; k++) {
+          c.array[k * 3] = src.instanceColor.array[list[k] * 3];
+          c.array[k * 3 + 1] = src.instanceColor.array[list[k] * 3 + 1];
+          c.array[k * 3 + 2] = src.instanceColor.array[list[k] * 3 + 2];
+        }
+        im.instanceColor = c;
+      }
+      im.name = src.name;
+      im.castShadow = src.castShadow;
+      im.receiveShadow = src.receiveShadow;
+      im.renderOrder = src.renderOrder;
+      im.userData = { ...src.userData };
+      im.frustumCulled = true;
+      im.computeBoundingSphere();
+      parent.add(im);
+      stats.chunkCells++;
+    }
+    parent.remove(src);
+    src.dispose();
+    stats.chunkSplit++;
+  }
+  return stats;
+}
+
 /* -------------------------------- baking -------------------------------- */
 
 /**
@@ -312,10 +417,10 @@ export function bakeToPlanet(root, { maxEdge = 3.0 } = {}) {
         _m.toArray(im.array, i * 16);
       }
       im.needsUpdate = true;
-      /* Instanced meshes stay unculled.  Their bound would have to come from
-       * the instance cloud rather than the source geometry, and most of them
-       * (sleepers, petals, blossom) span the district anyway -- so there is
-       * nothing to win and a moving petal field to get wrong. */
+      /* Left unculled here and sorted out by `chunkInstanced` below, which
+       * splits the cloud into cells small enough for the frustum test to mean
+       * something.  This used to be the final word on it -- see the note on
+       * that function for why one bound per cloud stopped being enough. */
       obj.frustumCulled = false;
       stats.instanced += n;
     } else {
@@ -349,6 +454,8 @@ export function bakeToPlanet(root, { maxEdge = 3.0 } = {}) {
     o.quaternion.identity();
     o.scale.set(1, 1, 1);
   });
+
+  Object.assign(stats, chunkInstanced(root));
 
   // Re-seat the rigid rigs. Their parents are identity by now, so the local
   // transform is the world transform.

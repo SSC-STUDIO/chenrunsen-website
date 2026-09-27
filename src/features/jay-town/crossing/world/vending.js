@@ -60,8 +60,24 @@ export function makeVendingMachine(variant = 0, seed = 1) {
   const rng = rngKit(1000 + seed * 37);
   const g = new THREE.Group();
   g.name = 'vending';
-  // holds the animated dispensed can, so it is re-seated rather than bent
-  g.userData.planetRigid = true;
+
+  /* Only the can moves, so only the can needs a rig.
+   *
+   * The whole machine used to be `planetRigid`, which is the obvious reading of
+   * "it holds an animated part" and was the most expensive line in the world:
+   * the bake leaves a rigid subtree alone, and a rigid subtree cannot be
+   * batched, so twenty-one machines at sixty-three meshes each put **1 323
+   * un-mergeable meshes** into the scene -- 885 of them in frame from the
+   * 展望台, which is most of a district's worth of draw calls spent on drinks
+   * machines four hundred metres away.  Sixty-one of those meshes never move.
+   *
+   * So the rig is a group of two -- the can and the hitbox -- and the body
+   * bakes and batches like any other shopfront.  What the machine gives up by
+   * being bent rather than re-seated is 0.9 mm of sag across its own width. */
+  const rig = new THREE.Group();
+  rig.name = 'vendingRig';
+  rig.userData.planetRigid = true;
+  g.add(rig);
 
   const matBody = cel({ color: V.body, bands: 3, tint: 0x6f6790 });
   const matAccent = cel({ color: V.accent, bands: 3, tint: 0x6f6790 });
@@ -367,7 +383,7 @@ export function makeVendingMachine(variant = 0, seed = 1) {
   );
   can.visible = false;
   can.castShadow = true;
-  g.add(can);
+  rig.add(can);
 
   const CAN_X = PORT_MX;
   const CAN_Z = PORT.z + 0.055;
@@ -417,7 +433,7 @@ export function makeVendingMachine(variant = 0, seed = 1) {
   // interaction hitbox
   const hit = box(BODY_W, BODY_H, BODY_D + 0.7, flat({ color: 0xff0000, cache: false }), 0, yBase + BODY_H / 2, 0.35);
   hit.visible = false;
-  g.add(hit);
+  rig.add(hit);
   g.userData.hitbox = hit;
 
   return g;

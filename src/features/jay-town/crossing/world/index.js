@@ -13,6 +13,7 @@ import { makeHouse, makeWall, makeTimberFence, makeBlockFence } from './building
 import { buildSakura, buildShrubs, buildGrove, buildBamboo, buildCedar } from './trees.js';
 import { buildPetals, buildFallenPatches } from './petals.js';
 import { buildPlanet, bakeToPlanet, wrapX, reliefAt, CIRCUMFERENCE } from './planet.js';
+import { batchStatic } from '../core/batch.js';
 /* The hills are a *third* ground surface, over both the graded terrain grid and
  * the planet sphere, and they are added to the height queries here rather than
  * folded into `reliefAt` -- `buildPlanet` samples that one, and the sphere has to
@@ -736,6 +737,11 @@ export function buildWorld(scene) {
    * still authored on a flat plane and has no idea the planet exists.       */
   const bakeStats = bakeToPlanet(root, { maxEdge: 4.0 });
   train.planetize();
+
+  /* Static batching depends on what the bake just established -- root-space
+   * geometry under identity transforms -- so it can only run here, and it has
+   * to run before anything caches a reference to a mesh. */
+  bakeStats.batch = batchStatic(root);
 
   /* ------------------------------- world api ------------------------------- */
   const world = {
