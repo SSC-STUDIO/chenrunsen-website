@@ -65,7 +65,13 @@ const inputFocused = () => {
 
 export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {}): TownSceneHandle {
   const coarse = window.matchMedia('(pointer: coarse)').matches
-  const lite = coarse || window.innerWidth < 700
+  /* `?lite=1` / `?lite=0` force the quality tier, which is the only way to
+   * measure what the tier is worth on one machine at one moment -- the
+   * pointer-coarse test cannot be varied from a desktop viewport. */
+  const liteParam = new URLSearchParams(window.location.search).get('lite')
+  const lite = liteParam === null
+    ? coarse || window.innerWidth < 700
+    : liteParam === '1'
   const media = window.matchMedia('(prefers-reduced-motion: reduce)')
 
   let renderer: THREE.WebGLRenderer
@@ -148,6 +154,20 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
     player.applyCamera(0)
     if (!lite) ebike = createEbike({ scene, world, player, hud: null })
     pipeline = new Pipeline(renderer, scene, camera, { pixelBudget: lite ? 1.6e6 : 3.8e6 })
+    /* **Supersampling is a desktop luxury, and the pipeline cannot know that.**
+     *
+     * `Pipeline.setSize` picks a render scale from the device pixel ratio alone
+     * -- 1.5 on a 1x screen, up to 2 on a 2x one -- and then clamps it by the
+     * pixel budget.  On a phone that means *supersampling a scene of 8.7
+     * million triangles*, which is the wrong place to spend a mobile GPU's
+     * budget by a wide margin: the ink pass wants the extra resolution, but not
+     * at 2.9x the fill.
+     *
+     * `forceScale` is the hook the pipeline already has for exactly this, and
+     * it takes precedence over the dpr guess.  1.0 on `lite` -- render at
+     * layout size.  The ink lines soften slightly and the frame time drops by
+     * most of a factor of three. */
+    if (lite) pipeline.forceScale = 1
   } catch (error) {
     console.error('Unable to mount Sakura Crossing town', error)
     renderer.dispose()
@@ -167,7 +187,14 @@ export function mountTownScene(canvas: HTMLCanvasElement, options: Options = {})
   canvas.parentElement?.appendChild(screenHost)
   const screens = new ScreenHub(screenHost)
   screens.onInfo = (info) => options.onScreenInfo?.(info)
+  screens.setLite(lite)
   for (const [zone, group] of screenRegistry()) screens.attach(zone, group)
+  /* `?screens=0` leaves the frames in the world and switches the projection
+   * off, which is how `scripts/verify-jay-town.mjs` measures what this system
+   * costs.  Nothing in the product sets it. */
+  if (new URLSearchParams(window.location.search).get('screens') === '0') {
+    screens.setEnabled(false)
+  }
 
   player.onInteract = (target) => {
     if (ebike?.riding) { ebike.dismount(); return }

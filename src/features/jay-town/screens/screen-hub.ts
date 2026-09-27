@@ -59,6 +59,10 @@ export type HubSong = PortalSource & { zone: number }
 const MASK_INTERVAL = 1 / 6
 /** Camera move, in metres squared, that invalidates a mask. */
 const MASK_MOVE = 0.0004
+/** Camera move that invalidates a projection, in metres squared. ~1 cm. */
+const MOVE_EPS = 0.0001
+/** Camera turn that invalidates a projection, in radians.  ~0.06 degrees. */
+const TURN_EPS = 0.001
 /** Beyond this the screen is a few pixels of haze and not worth masking. */
 const MASK_RANGE = 90
 /** Beyond this nothing is projected at all. */
@@ -66,6 +70,11 @@ const DRAW_RANGE = 140
 /** Cell counts per axis.  ~25 px a cell at 1440 wide. */
 const MASK_W = 96
 const MASK_H = 54
+/** The same, on a phone, where the readback is the expensive part. */
+const MASK_W_LITE = 40
+const MASK_H_LITE = 23
+/** How often a mask may be rebuilt, on a phone. */
+const MASK_INTERVAL_LITE = 1 / 3
 
 export class ScreenHub {
   private portals: MediaPortal[] = []
@@ -93,6 +102,9 @@ export class ScreenHub {
   private maskClock = MASK_INTERVAL
   private info: ScreenInfo[] = []
   private surveyClock = 0
+  private disabled = false
+  private lite = false
+  private lastQuat = new THREE.Quaternion()
   /** Last frame's projection working, for the verification harness. */
   readonly debug: unknown[] = []
   readonly revision = PROJECTION_REVISION
@@ -106,6 +118,33 @@ export class ScreenHub {
     for (const spec of specs) {
       this.portals.push(new MediaPortal({ spec, host }))
     }
+  }
+
+  /**
+   * Turn the whole projection-and-mask system off, leaving the 3D frames.
+   *
+   * For the performance harness, which needs to measure the scene with and
+   * without this system to know what it actually costs.  Nothing else calls
+   * it, and the screens still exist as geometry -- only the DOM side and the
+   * per-frame maths stop.
+   */
+  setEnabled(value: boolean): void {
+    this.disabled = !value
+    if (this.disabled) {
+      for (const portal of this.portals) portal.release()
+      for (const menu of this.portals) menu.place('', null, 0)
+    }
+  }
+
+  /**
+   * Coarse pointer or narrow viewport -- the same gate `scene.ts` uses.
+   *
+   * A phone gets a smaller mask grid and rebuilds it half as often, because the
+   * readback is a synchronous stall and on a mobile GPU that stall is the whole
+   * cost of this system.
+   */
+  setLite(value: boolean): void {
+    this.lite = value
   }
 
   /** Register built geometry so the hub reads live world matrices. */
@@ -255,9 +294,35 @@ export class ScreenHub {
   }
 
   update(input: HubInput, dt: number): void {
+    if (this.disabled) return
     const { camera, renderer, depthTexture } = input
     this.cameraPos.copy(camera.position)
     this.debug.length = 0
+
+    /* **Nothing to do when nothing moved.**
+     *
+     * The projection is a pure function of the camera and the screen's world
+     * matrix, and the world matrix never changes -- the screens are static
+     * geometry.  So if the camera has not moved and has not turned, every
+     * matrix and every mask this function would compute is the one it computed
+     * last frame.  Standing still is what a viewer does most of the time in a
+     * scene about walking slowly and looking at things, and this skips the
+     * whole of it: five `updateWorldMatrix` calls, five matrix inversions, the
+     * DOM writes -- and, once the portal is loaded, the depth readback.
+     *
+     * The turn test needs the camera's own orientation, not just its position:
+     * looking around on the spot moves nothing at all. */
+    const moved = this.lastMaskAt.distanceToSquared(this.cameraPos) > MOVE_EPS
+    const turned = this.lastQuat.angleTo(camera.quaternion) > TURN_EPS
+    if (!moved && !turned) {
+      this.surveyClock += dt
+      if (this.surveyClock > 0.25) {
+        this.surveyClock = 0
+        this.survey(input.flatX, input.flatZ)
+      }
+      return
+    }
+    this.lastQuat.copy(camera.quaternion)
 
     this.surveyClock += dt
     if (this.surveyClock > 0.25) {
@@ -266,8 +331,7 @@ export class ScreenHub {
     }
 
     this.maskClock += dt
-    const moved = this.lastMaskAt.distanceToSquared(this.cameraPos) > MASK_MOVE
-    const maskDue = moved && this.maskClock >= MASK_INTERVAL
+    const maskDue = (turned || moved) && this.maskClock >= (this.lite ? MASK_INTERVAL_LITE : MASK_INTERVAL)
 
     const nextInfo: ScreenInfo[] = []
 
@@ -321,7 +385,11 @@ export class ScreenHub {
       let maskUrl: string | null = null
       let draw = Boolean(projected) && matrix !== ''
 
-      if (draw && maskDue && depthTexture && distance < MASK_RANGE) {
+      /* The mask is only worth building for a screen that has something to
+       * show.  Idle screens are a flat colour that the 3D curtain underneath
+       * already supplies, so running a depth readback for one is pure cost --
+       * and it was being paid five times a frame before anything was playing. */
+      if (draw && portal.hasMedia && maskDue && depthTexture && distance < MASK_RANGE) {
         const result = this.maskFor(spec.zone).update(
           renderer, depthTexture, camera, this.centre, camera.near, camera.far,
         )
@@ -357,7 +425,9 @@ export class ScreenHub {
   private maskFor(zone: number): ScreenMask {
     let mask = this.maskCache.get(zone)
     if (!mask) {
-      mask = new ScreenMask(MASK_W, MASK_H)
+      mask = this.lite
+        ? new ScreenMask(MASK_W_LITE, MASK_H_LITE)
+        : new ScreenMask(MASK_W, MASK_H)
       this.maskCache.set(zone, mask)
     }
     return mask

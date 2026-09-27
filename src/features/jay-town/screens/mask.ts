@@ -94,6 +94,8 @@ const MASK_VERT = /* glsl */ `
 export type MaskResult = {
   /** `mask-image` URL, or `null` when no mask is needed. */
   maskUrl: string | null
+  /** Raw pixels, one byte per cell, row-major and top-down.  For tests. */
+  grid: Uint8Array
   /** Fraction of cells the world does not hide. */
   coverage: number
 }
@@ -107,13 +109,14 @@ export class ScreenMask {
   private ctx: CanvasRenderingContext2D
   private image: ImageData
   private url: string | null = null
+  private pending = false
   private scratch = new THREE.Matrix4()
 
   readonly width: number
   readonly height: number
   readonly cells: number
 
-  constructor(width = 48, height = 27) {
+  constructor(width = 96, height = 54) {
     this.width = width
     this.height = height
     this.cells = width * height
@@ -155,14 +158,16 @@ export class ScreenMask {
       this.image.data[i * 4 + 1] = 255
       this.image.data[i * 4 + 2] = 255
     }
+    this.grid = new Uint8Array(this.cells)
   }
+
+  private grid: Uint8Array
 
   /**
    * Render the visibility grid for one screen and hand back a mask image.
    *
    * `depthTexture` is the scene's depth attachment, `center` the live centre
-   * of the screen in world space (from the screen group's world matrix, so it
-   * follows the planet bake rather than the flat table).
+   * of the screen in world space.
    */
   update(
     renderer: THREE.WebGLRenderer,
@@ -195,10 +200,7 @@ export class ScreenMask {
     renderer.setClearColor(prevClearColor, 1)
 
     /* `readRenderTargetPixels` returns bottom-up while the mask is applied
-     * top-down, so the rows are reversed here -- and this is also where the
-     * grid is turned into a PNG, which is the only reason a canvas is
-     * involved at all: the browser does the scaling, with smoothing, for
-     * free. */
+     * top-down, so the rows are reversed here. */
     let lit = 0
     for (let y = 0; y < this.height; y++) {
       const src = (this.height - 1 - y) * this.width * 4
@@ -206,19 +208,40 @@ export class ScreenMask {
       for (let x = 0; x < this.width; x++) {
         const on = this.pixels[src + x * 4] > 127
         if (on) lit++
+        this.grid[y * this.width + x] = on ? 1 : 0
         this.image.data[dst + x * 4 + 3] = on ? 255 : 0
       }
     }
 
-    if (lit === 0) return { maskUrl: null, coverage: 0 }
-    if (lit === this.cells) return { maskUrl: null, coverage: 1 }
+    if (lit === 0) return { maskUrl: null, grid: this.grid, coverage: 0 }
+    if (lit === this.cells) return { maskUrl: null, grid: this.grid, coverage: 1 }
 
     this.ctx.putImageData(this.image, 0, 0)
-    this.url = this.canvas.toDataURL('image/png')
-    return { maskUrl: this.url, coverage: lit / this.cells }
+    /* **Not `toDataURL`.**
+     *
+     * The first version handed back a base64 PNG, which meant a synchronous
+     * *encode* every time the mask refreshed -- and the encode turned out to
+     * cost more than the depth readback it was describing.  A blob is a handle
+     * to the same canvas with no base64 step at all, and `mask-image` takes a
+     * blob URL perfectly well, so the encoding was pure overhead.
+     *
+     * `toBlob` is still asynchronous, so the URL from the previous refresh
+     * stays in place until the new one arrives: the mask lags a frame behind
+     * the transform, which at 6 Hz is invisible and far better than blocking
+     * the frame on an encoder. */
+    if (this.pending) return { maskUrl: this.url, grid: this.grid, coverage: lit / this.cells }
+    this.pending = true
+    this.canvas.toBlob((blob) => {
+      this.pending = false
+      if (!blob) return
+      if (this.url) URL.revokeObjectURL(this.url)
+      this.url = URL.createObjectURL(blob)
+    }, 'image/png')
+    return { maskUrl: this.url, grid: this.grid, coverage: lit / this.cells }
   }
 
   dispose() {
+    if (this.url) URL.revokeObjectURL(this.url)
     this.rt.dispose()
     this.quad.dispose()
     this.material.dispose()
