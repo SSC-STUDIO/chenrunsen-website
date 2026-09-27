@@ -76,12 +76,19 @@ const BURIED_BELOW = 0.12
 const MASK_RANGE = 90
 /** Beyond this nothing is projected at all. */
 const DRAW_RANGE = 140
-/** Cell counts per axis.  ~25 px a cell at 1440 wide. */
-const MASK_W = 96
-const MASK_H = 54
+/** Cell counts per axis.
+ *
+ * Finer than it was, and it had to be: the silhouette is drawn as runs of whole
+ * cells, so at 96x54 a cell is about 18 screen pixels and a diagonal edge came
+ * out as a visible staircase -- the "still not as clean as before" complaint.
+ * 144x81 is around 12 pixels a cell, which is fine enough that the steps read
+ * as a soft edge rather than as stairs, and the readback is still only 11 664
+ * cells rather than the 921 600 a full-resolution frame would cost. */
+const MASK_W = 144
+const MASK_H = 81
 /** The same, on a phone, where the readback is the expensive part. */
-const MASK_W_LITE = 40
-const MASK_H_LITE = 23
+const MASK_W_LITE = 64
+const MASK_H_LITE = 36
 /** How often a mask may be rebuilt, on a phone. */
 const MASK_INTERVAL_LITE = 1 / 3
 
@@ -92,6 +99,16 @@ export class ScreenHub {
   /** The last mask built per zone, kept so it survives between refreshes. */
   /** The last silhouette built per zone, kept so it survives between refreshes. */
   private heldMask = new Map<number, { runs: number[]; coverage: number }>()
+  /**
+   * Zones whose current player has already had a silhouette built for it.
+   *
+   * This exists because of a hole that let video draw completely unclipped: the
+   * camera-settled early return skips the whole pass, so a screen armed *after*
+   * the viewer stopped moving never got a mask at all -- it rendered raw until
+   * they happened to take a step.  A player that has just loaded therefore
+   * forces a rebuild regardless of the clock.
+   */
+  private maskedWithMedia = new Set<number>()
 
   private corners = makeCorners()
   private quad: Quad = [
@@ -417,19 +434,21 @@ export class ScreenHub {
        * show.  Idle screens are a flat colour that the 3D curtain underneath
        * already supplies, so running a depth readback for one is pure cost --
        * and it was being paid five times a frame before anything was playing. */
-      if (draw && portal.hasMedia && maskDue && depthTexture && distance < MASK_RANGE) {
+      const justLoaded = portal.hasMedia && !this.maskedWithMedia.has(spec.zone)
+      if (draw && portal.hasMedia && (maskDue || justLoaded) && depthTexture && distance < MASK_RANGE) {
         const result = this.maskFor(spec.zone).update(
           renderer, depthTexture, camera, this.centre, camera.near, camera.far,
         )
         runs = result.runs
         coverage = result.coverage
         this.heldMask.set(spec.zone, { runs, coverage })
+        this.maskedWithMedia.add(spec.zone)
         portal.setClip(runs, result.width, result.height)
-        portal.useClip(runs.length > 0)
       } else if (!portal.hasMedia) {
         /* Nothing loaded means nothing to hide, and a stale silhouette from a
          * previous song would clip the placeholder to the wrong shape. */
         this.heldMask.delete(spec.zone)
+        this.maskedWithMedia.delete(spec.zone)
         runs = []
         coverage = 1
         portal.useClip(false)
@@ -444,10 +463,24 @@ export class ScreenHub {
        * threshold is set well below half so that a screen half in shadow still
        * plays. */
       const buried = coverage < BURIED_BELOW
-      portal.setPictureVisible(draw && !buried)
 
-      portal.place(draw ? matrix : '', coverage)
-      portal.show(draw)
+      /* **A portal only exists on screen when it has something to show.**
+       *
+       * A `.media-portal` with no player is not invisible: it carries a dark
+       * fill and the veil's black gradient, so a portal marked live without
+       * media paints an **opaque black rectangle** over the street.  All five
+       * were being marked live the moment they were in range, which is the real
+       * source of the black boxes -- they were never video bleeding through a
+       * wall at all, they were empty players sitting on top of the town.
+       *
+       * The 3D frame and its curtain are already there in the scene and already
+       * occluded correctly by the depth buffer, so an idle screen loses nothing
+       * by having no DOM over it. */
+      const showPicture = draw && !buried && portal.hasMedia
+      portal.setPictureVisible(showPicture)
+
+      portal.place(showPicture ? matrix : '', coverage)
+      portal.show(showPicture)
 
       nextInfo.push({
         zone: spec.zone,
@@ -491,6 +524,7 @@ export class ScreenHub {
     this.portals = []
     this.maskCache.clear()
     this.heldMask.clear()
+    this.maskedWithMedia.clear()
     this.groups.clear()
     this.onInfo = null
     this.onFocus = null

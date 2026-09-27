@@ -50,6 +50,7 @@ const MASK_FRAG = /* glsl */ `
   uniform mat4 uInvVP;
   uniform float uNear;
   uniform float uFar;
+  uniform vec2 uGrid;
   varying vec2 vUv;
 
   void main() {
@@ -77,9 +78,29 @@ const MASK_FRAG = /* glsl */ `
 
     float sceneRaw = texture2D(tDepth, vUv).x;
     float viewZ = perspectiveDepthToViewZ(sceneRaw, uNear, uFar);
-    float visible = step(planeDist - 0.04, -viewZ);
+    float sceneDist = -viewZ;
 
-    gl_FragColor = vec4(vec3(visible), 1.0);
+    /* **Supersampled, so a diagonal edge comes out as a gradient rather than a
+     * staircase.**  The grid is coarse on purpose -- a few thousand cells rather
+     * than a full frame -- and a hard on/off per cell turns every diagonal
+     * silhouette into visible steps.  Four samples with a scaled offset break
+     * the edge across five levels instead, which is what lets the consumer keep
+     * a cell that is *partly* visible and read as antialiased.
+     *
+     * The offset is scaled by the cell's own footprint at that point, so it
+     * stays a fraction of a cell whether the screen is a metre away or forty. */
+    vec2 cellUv = vec2(1.0 / uGrid.x, 1.0 / uGrid.y);
+    vec2 e = cellUv * 0.32;
+    float vis = 0.0;
+    for (int i = 0; i < 4; i++) {
+      vec2 o = vec2(i == 0 || i == 3 ? -e.x : e.x, i < 2 ? -e.y : e.y);
+      float d = texture2D(tDepth, vUv + o).x;
+      float sd = -perspectiveDepthToViewZ(d, uNear, uFar);
+      vis += sd >= planeDist - 0.04 ? 1.0 : 0.0;
+    }
+    vis *= 0.25;
+
+    gl_FragColor = vec4(vec3(vis), 1.0);
   }
 `
 
@@ -120,8 +141,12 @@ export class ScreenMask {
     this.cells = width * height
 
     this.rt = new THREE.WebGLRenderTarget(width, height, {
-      minFilter: THREE.NearestFilter,
-      magFilter: THREE.NearestFilter,
+      /* Linear, so the supersampled edge above survives the readback as a
+       * gradient instead of being quantised back to on/off by nearest sampling.
+       * A cell therefore carries "how much of this cell is visible" and the
+       * silhouette can follow it. */
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
       depthBuffer: false,
       stencilBuffer: false,
       type: THREE.UnsignedByteType,
@@ -136,6 +161,7 @@ export class ScreenMask {
         uInvVP: { value: new THREE.Matrix4() },
         uNear: { value: 0.25 },
         uFar: { value: 600 },
+        uGrid: { value: new THREE.Vector2(width, height) },
       },
       vertexShader: MASK_VERT,
       fragmentShader: MASK_FRAG,
@@ -193,7 +219,12 @@ export class ScreenMask {
       const src = (this.height - 1 - y) * this.width * 4
       const dst = y * this.width * 4
       for (let x = 0; x < this.width; x++) {
-        const on = this.pixels[src + x * 4] > 127
+        /* Anything above zero counts as visible, so a cell that is only a
+         * quarter covered still contributes.  Erring outward is the right
+         * direction: the veil underneath darkens the border and the world
+         * drawing over the screen's silhouette edge is what a viewer reads as
+         * "the screen is behind that wall".  Erring inward eats the picture. */
+        const on = this.pixels[src + x * 4] > 8
         if (on) lit++
         this.grid[y * this.width + x] = on ? 1 : 0
       }
